@@ -1,0 +1,839 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["httpx>=0.27", "rich>=13.7", "cryptography>=42"]
+# ///
+"""orly - a command line client for O'Reilly Answers.
+
+Talks to the same private endpoints learning.oreilly.com/answers2 uses:
+
+    POST /api/v1/miso-answers-relay-service/questions/            -> {question_id}
+    GET  /api/v1/miso-answers-relay-service/user-question-history/       -> paginated
+    GET  /api/v1/miso-answers-relay-service/user-question-history/<id>/  -> answer
+
+Auth is the plain browser session cookie, so the CLI has to borrow one from
+Chrome (or be handed one). Answers are not streamed: the POST returns
+immediately and `answer` stays empty until the whole thing is ready.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import contextlib
+import html as html_mod
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+import httpx
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.table import Table
+
+BASE = "https://learning.oreilly.com/api/v1/miso-answers-relay-service"
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "orly"
+COOKIE_FILE = CONFIG / "cookie"
+
+# The retrieval filter the web app sends. It encodes which content types are
+# searched and which entitlements the account does not have, so answers match
+# what you'd get in the browser.
+FQ = (
+    '(type:book OR type:article OR type:video) AND language:("en" OR "EN" OR '
+    '"en-au" OR "en-gb" OR "en-GB" OR "en-us" OR "en-US")'
+)
+
+FIELDS = [
+    "custom_attributes.ourn",
+    "custom_attributes.publishers",
+    "custom_attributes.marketing_type*",
+    "custom_attributes.required_p_permissions",
+    "url",
+    "cover_image",
+    "authors",
+    "html",
+]
+
+PIPED = not sys.stdout.isatty()
+console = Console(soft_wrap=PIPED)
+err = Console(stderr=True)
+
+
+# --------------------------------------------------------------------------
+# auth
+# --------------------------------------------------------------------------
+
+class AuthError(Exception):
+    pass
+
+
+def keychain_password() -> str:
+    """Chrome's cookie encryption passphrase, from the login keychain."""
+    for args in (
+        ["security", "find-generic-password", "-w", "-s", "Chrome Safe Storage", "-a", "Chrome"],
+        ["security", "find-generic-password", "-w", "-s", "Chrome Safe Storage"],
+    ):
+        try:
+            out = subprocess.run(args, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    raise AuthError(
+        "Could not read 'Chrome Safe Storage' from the Keychain.\n"
+        "If a Keychain dialog appeared, click Allow (or Always Allow) and retry."
+    )
+
+
+def decrypt_value(encrypted: bytes, key: bytes) -> str:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    if not encrypted:
+        return ""
+    if encrypted[:3] not in (b"v10", b"v11"):
+        return encrypted.decode("utf-8", "replace")  # stored in the clear
+
+    dec = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).decryptor()
+    plain = dec.update(encrypted[3:]) + dec.finalize()
+    if plain and 1 <= plain[-1] <= 16:
+        plain = plain[: -plain[-1]]  # strip PKCS#7 padding
+    try:
+        return plain.decode("utf-8")
+    except UnicodeDecodeError:
+        # Chrome >= 104 prefixes the plaintext with a 32-byte domain hash.
+        return plain[32:].decode("utf-8", "replace")
+
+
+def chrome_profiles() -> list[Path]:
+    base = Path.home() / "Library/Application Support/Google/Chrome"
+    if not base.is_dir():
+        raise AuthError(f"No Chrome installation found at {base}")
+    found = [p / "Cookies" for p in sorted(base.iterdir()) if (p / "Cookies").is_file()]
+    if not found:
+        raise AuthError("No Chrome cookie databases found.")
+    return found
+
+
+def cookies_from_chrome(profile: str | None = None) -> str:
+    """Pull every learning.oreilly.com cookie out of Chrome, as a Cookie header."""
+    from cryptography.hazmat.primitives.hashes import SHA1
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+    dbs = chrome_profiles()
+    if profile:
+        dbs = [p for p in dbs if p.parent.name == profile]
+        if not dbs:
+            raise AuthError(f"Chrome profile {profile!r} not found.")
+
+    key = PBKDF2HMAC(
+        algorithm=SHA1(), length=16, salt=b"saltysalt", iterations=1003
+    ).derive(keychain_password().encode())
+
+    best: dict[str, str] = {}
+    best_from = None
+    for db in dbs:
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "Cookies"
+            shutil.copy2(db, copy)  # the live DB is locked while Chrome runs
+            for suffix in ("-wal", "-shm"):
+                if (side := db.with_name(db.name + suffix)).is_file():
+                    shutil.copy2(side, copy.with_name(copy.name + suffix))
+            try:
+                con = sqlite3.connect(f"file:{copy}?immutable=0", uri=True)
+                rows = con.execute(
+                    "SELECT name, value, encrypted_value FROM cookies "
+                    "WHERE host_key LIKE '%oreilly.com'"
+                ).fetchall()
+                con.close()
+            except sqlite3.Error:
+                continue
+
+        jar = {}
+        for name, value, enc in rows:
+            v = value or decrypt_value(enc, key)
+            if v:
+                jar[name] = v
+        # Pick whichever profile is actually signed in.
+        if "groot_sessionid" in jar and len(jar) > len(best):
+            best, best_from = jar, db.parent.name
+        elif not best and jar:
+            best, best_from = jar, db.parent.name
+
+    if not best:
+        raise AuthError(
+            "No O'Reilly cookies in Chrome. Sign in to learning.oreilly.com first."
+        )
+    if "groot_sessionid" not in best:
+        err.print(
+            f"[yellow]warning:[/] no session cookie in {best_from}; "
+            "you may not be signed in."
+        )
+    return "; ".join(f"{k}={v}" for k, v in best.items()), best_from
+
+
+def jwt_expiry(token: str) -> float | None:
+    """`exp` out of a JWT payload. Signature is ignored; we only want the clock."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        pad = parts[1] + "=" * (-len(parts[1]) % 4)
+        return float(json.loads(base64.urlsafe_b64decode(pad))["exp"])
+    except Exception:
+        return None
+
+
+def chrome_expiries() -> dict[str, float]:
+    """Cookie name -> unix expiry, straight from Chrome.
+
+    expires_utc is not encrypted, so this needs no Keychain access.
+    A value of 0 means a session cookie (dies when Chrome quits).
+    """
+    out: dict[str, float] = {}
+    try:
+        dbs = chrome_profiles()
+    except AuthError:
+        return out
+    for db in dbs:
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "Cookies"
+            try:
+                shutil.copy2(db, copy)
+                for suffix in ("-wal", "-shm"):
+                    if (side := db.with_name(db.name + suffix)).is_file():
+                        shutil.copy2(side, copy.with_name(copy.name + suffix))
+                con = sqlite3.connect(f"file:{copy}?immutable=0", uri=True)
+                rows = con.execute(
+                    "SELECT name, expires_utc FROM cookies WHERE host_key LIKE '%oreilly.com'"
+                ).fetchall()
+                con.close()
+            except (OSError, sqlite3.Error):
+                continue
+        for name, exp in rows:
+            # Chrome stores microseconds since 1601-01-01.
+            unix = (exp / 1_000_000 - 11_644_473_600) if exp else 0.0
+            out[name] = max(out.get(name, 0.0), unix)
+    return out
+
+
+#: The pair that actually authenticates. `orm-jwt` alone gets a 401 once its
+#: claim lapses; `orm-rt` alone is never enough. Sent together, the gateway
+#: silently refreshes and re-issues both. groot_sessionid is not used by this API.
+AUTH_COOKIES = ("orm-jwt", "orm-rt")
+
+
+def describe_expiry(cookie: str) -> list[tuple[str, float | None, str]]:
+    """(name, unix expiry or None, what that expiry means) for the auth cookies."""
+    jar = dict(p.split("=", 1) for p in cookie.split("; ") if "=" in p)
+    chrome = chrome_expiries()
+    rows = []
+    for name in AUTH_COOKIES:
+        if name not in jar:
+            rows.append((name, None, "MISSING - re-run: orly auth --chrome"))
+            continue
+        if claim := jwt_expiry(jar[name]):
+            rows.append((name, claim, "access token claim; auto-refreshed by orm-rt"))
+        else:
+            rows.append(
+                (name, chrome.get(name) or None, "refresh token; rolls 30d on each use")
+            )
+    return rows
+
+
+def load_cookie() -> str:
+    if env := os.environ.get("ORLY_COOKIE"):
+        return env.strip()
+    if COOKIE_FILE.is_file():
+        return COOKIE_FILE.read_text().strip()
+    raise AuthError(
+        "Not authenticated. Run:  orly auth --chrome\n"
+        "(or set ORLY_COOKIE to a learning.oreilly.com Cookie header)"
+    )
+
+
+def save_cookie(cookie: str) -> None:
+    """Write the jar atomically.
+
+    Every invocation rewrites this file after the gateway rotates the tokens,
+    so parallel agents overlap here constantly. A plain write_text() truncates
+    first, and a concurrent reader that lands in that window gets an empty jar
+    and reports a bogus auth failure. Write a sibling temp file and rename.
+    """
+    CONFIG.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=CONFIG, prefix=".cookie.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(cookie)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, COOKIE_FILE)  # atomic within the same filesystem
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+# --------------------------------------------------------------------------
+# api
+# --------------------------------------------------------------------------
+
+class Answers:
+    """Client for the Answers relay service.
+
+    Auth is `orm-jwt` (a short-lived access JWT) plus `orm-rt` (the refresh
+    token). The gateway re-issues BOTH on every response, so the jar has to be
+    written back or the stored session slowly goes stale.
+    """
+
+    def __init__(self, cookie: str, timeout: float = 30.0, persist: bool = True):
+        self._jar = dict(p.split("=", 1) for p in cookie.split("; ") if "=" in p)
+        self._persist = persist
+        self.http = httpx.Client(
+            base_url=BASE,
+            timeout=timeout,
+            follow_redirects=False,
+            cookies=self._jar,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Referer": "https://learning.oreilly.com/answers2/",
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+                ),
+            },
+        )
+
+    def flush_cookies(self) -> bool:
+        """Write refreshed tokens back to disk. Returns True if anything moved."""
+        if not self._persist:
+            return False
+        # dict(client.cookies) raises CookieConflict when a name (e.g. _abck)
+        # exists for several domains, so walk the jar and let the
+        # oreilly.com-scoped entry win.
+        current: dict[str, str] = {}
+        for c in sorted(
+            self.http.cookies.jar, key=lambda c: "oreilly.com" in (c.domain or "")
+        ):
+            if c.value is not None:
+                current[c.name] = c.value
+        if not current or current == self._jar:
+            return False
+        merged = {**self._jar, **current}
+        if merged == self._jar:
+            return False
+        self._jar = merged
+        try:
+            save_cookie("; ".join(f"{k}={v}" for k, v in merged.items()))
+        except OSError:
+            return False
+        return True
+
+    def _check(self, r: httpx.Response) -> httpx.Response:
+        self.flush_cookies()
+        if r.status_code in (401, 403):
+            raise AuthError(
+                "O'Reilly rejected the session cookie (HTTP "
+                f"{r.status_code}). Re-run:  orly auth --chrome"
+            )
+        r.raise_for_status()
+        return r
+
+    def ask(self, question: str, source_page: str = "answers") -> str:
+        payload = {
+            "fq": FQ,
+            "source_fl": FIELDS,
+            "related_resource_fl": FIELDS,
+            "cite_link": True,
+            # The web app sends 500/200. Both are honoured up to at least
+            # 1500/1200, and at 200 the cited passage is routinely chopped
+            # mid-word ("...set up backup jobs at specifi"). A caller quoting
+            # that has to either drop the sentence or invent its ending, and
+            # agents invent. Ask for room to finish the thought.
+            "_pipeline_config": {
+                "snippet_length": 1500,
+                "highlight_length": 1200,
+                "version": "v3",
+            },
+            "question": question,
+            "query_source": "original",
+            "question_source_page": source_page,
+            "answer_render_page": source_page,
+        }
+        r = self._check(self.http.post("/questions/", json=payload))
+        return r.json()["question_id"]
+
+    def get(self, qid: str) -> dict | None:
+        """Fetch a question. Returns None while the record is still being created.
+
+        A freshly POSTed question 404s for a second or two before it lands in
+        the history table.
+        """
+        r = self.http.get(f"/user-question-history/{qid}/")
+        if r.status_code == 404:
+            self.flush_cookies()
+            return None
+        return self._check(r).json()
+
+    def history(self, limit: int = 20) -> list[dict]:
+        out: list[dict] = []
+        url = "/user-question-history/"
+        while url and len(out) < limit:
+            page = self._check(self.http.get(url)).json()
+            out.extend(page.get("results", []))
+            url = page.get("next")
+        return out[:limit]
+
+    def wait(self, qid: str, timeout: float = 180.0, on_stage=None) -> dict:
+        """Poll until the answer is finished. There is no streaming endpoint."""
+        deadline = time.monotonic() + timeout
+        appear_by = time.monotonic() + max(30.0, min(120.0, timeout / 2))
+        delay = 1.0
+        while True:
+            rec = self.get(qid)
+            if rec is None:
+                if time.monotonic() > appear_by:
+                    raise RuntimeError(
+                        f"Question {qid} has not appeared yet.\n"
+                        f"It WAS created, so nothing is lost: it is still being "
+                        f"written, which happens when several asks run at once.\n"
+                        f"Recover it with:  orly show {qid[:8]}"
+                    )
+                if on_stage:
+                    on_stage("Submitting")
+            else:
+                if rec.get("is_finished"):
+                    return rec
+                if msg := rec.get("error_message"):
+                    raise RuntimeError(f"O'Reilly returned an error: {msg}")
+                if on_stage:
+                    data = (rec.get("miso_response") or {}).get("data") or {}
+                    on_stage(data.get("answer_stage") or "Thinking")
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"Answer not ready after {timeout:.0f}s (question {qid})"
+                )
+            time.sleep(delay)
+            delay = min(delay * 1.35, 4.0)
+
+
+# --------------------------------------------------------------------------
+# rendering
+# --------------------------------------------------------------------------
+
+CITE = re.compile(r"\[\[\^(\d+)\]\]\([^)]*\)")
+
+
+def clean_quote(text: str) -> str:
+    """The cited passage as plain prose.
+
+    `highlight_text` arrives with hard line breaks where the book or transcript
+    wrapped, which is noise in a quotation. `snippet` is the same passage with
+    <mark> around it, and is the fallback when the plain field is absent.
+    """
+    text = re.sub(r"</?mark>", "", text or "")
+    text = html_mod.unescape(text)
+    return " ".join(text.split())
+
+
+def flag_truncation(quote: str) -> str:
+    """Make a chopped passage obviously chopped.
+
+    O'Reilly cuts the highlight at a character budget, not a sentence boundary,
+    so a passage can stop mid-word. Rendered bare, that reads as a complete
+    quotation and a caller will tidy up the ending -- one agent handed this
+    output silently "completed" `...backup jobs at specifi` to
+    `at specifi[c intervals]` and presented it as a direct quote. An explicit
+    marker is the difference between a short quote and a fabricated one.
+    """
+    q = (quote or "").rstrip()
+    if not q:
+        return q
+    if q[-1] in ".!?" or q[-1] in "\"')]" or q.endswith("..."):
+        return q
+    return q + " [... truncated mid-sentence; do not complete it]"
+
+
+def render(rec: dict, show_sources: bool = True, show_related: bool = False,
+           expand: bool = False) -> None:
+    data = (rec.get("miso_response") or {}).get("data") or {}
+    answer = data.get("answer") or ""
+    if not answer:
+        err.print("[yellow]No answer text in the response.[/]")
+        return
+
+    console.print()
+    console.print(f"[bold]{rec.get('question', '').strip()}[/]")
+    console.print()
+    console.print(Markdown(CITE.sub(r"[\1]", answer)))
+
+    sources = data.get("sources") or []
+    if show_sources and sources:
+        console.print()
+        console.print("[bold]Sources[/]")
+        for i, s in enumerate(sources, 1):
+            title = s.get("title") or "(untitled)"
+            chapter = s.get("child_title")
+            who = ", ".join(s.get("authors") or [])
+            year = (s.get("date") or "")[:4]
+            head = f"[cyan]{i:>2}.[/] [bold]{title}[/]"
+            if year:
+                head += f" [dim]({year})[/]"
+            console.print(head)
+            if chapter:
+                console.print(f"    [italic]{chapter}[/]")
+            if who:
+                console.print(f"    [dim]{who}[/]")
+            # soft_wrap keeps the URL on one logical line so it stays clickable
+            console.print(
+                f"    [blue]{s.get('child_url') or s.get('url') or ''}[/]",
+                soft_wrap=True,
+            )
+
+            # The passage O'Reilly actually cited, verbatim. This is the whole
+            # reason to prefer Answers over a web search: it is a quotable line
+            # from a named book with a link to the exact spot. It arrives in
+            # every response and used to be dropped on the floor here, which
+            # left a caller with a list of titles and nothing to quote.
+            if expand:
+                quote = flag_truncation(
+                    clean_quote(s.get("highlight_text") or s.get("snippet") or "")
+                )
+                if quote:
+                    console.print()
+                    console.print(f'    [italic]"{quote}"[/]', soft_wrap=True)
+                pub = ", ".join((s.get("custom_attributes") or {}).get("publishers") or [])
+                if pub:
+                    console.print(f"    [dim]{pub}[/]")
+                console.print()
+
+        # Say the flag exists, in the output, where a caller will actually meet
+        # it. An agent handed `orly ask ...` sees the answer and a list of
+        # links; nothing tells it the verbatim quotes are one flag away, so it
+        # does not ask for them. A man page nobody reads cannot fix that.
+        if not expand:
+            qid = (data.get("question_id") or "")[:8]
+            quotable = sum(
+                1 for s in sources if (s.get("highlight_text") or s.get("snippet"))
+            )
+            if quotable:
+                console.print()
+                console.print(
+                    f"[dim]{quotable} of these carry the verbatim passage O'Reilly cited. "
+                    f"To get them: [/][bold]orly show {qid} --expand[/]"
+                    f"[dim]  (or --json for everything)[/]"
+                )
+
+    # Both keys exist in the response and only one is ever filled: the API
+    # puts the questions in `followup_questions` and leaves
+    # `related_questions` an empty list. Reading only the latter made
+    # --follow-ups a flag that printed nothing, silently, always.
+    related = (data.get("followup_questions") or data.get("related_questions") or [])
+    if show_related and related:
+        console.print()
+        console.print("[bold]Follow-ups[/]")
+        for q in related:
+            console.print(f"  [dim]-[/] {q if isinstance(q, str) else q.get('question', q)}")
+
+
+# --------------------------------------------------------------------------
+# commands
+# --------------------------------------------------------------------------
+
+def compact(rec: dict) -> dict:
+    """The answer and its citations, without the payload that blows up a caller.
+
+    The raw record is ~14k tokens, two thirds of it the full HTML of every cited
+    chapter plus a verbatim echo of the request config. Nothing reads that; it
+    just evicts the caller's context. Keep what a citation needs.
+    """
+    data = (rec.get("miso_response") or {}).get("data") or {}
+    return {
+        "question_id": rec.get("question_id"),
+        "question": rec.get("question"),
+        "asked_at": rec.get("created_time"),
+        "answer": CITE.sub(r"[\1]", data.get("answer") or ""),
+        "sources": [
+            {
+                "n": i,
+                "title": s.get("title"),
+                "chapter": s.get("child_title"),
+                "authors": s.get("authors") or [],
+                "year": (s.get("date") or "")[:4] or None,
+                "url": s.get("child_url") or s.get("url"),
+                "quote": flag_truncation(
+                    clean_quote(s.get("highlight_text") or s.get("snippet") or "")
+                )
+                or None,
+            }
+            for i, s in enumerate(data.get("sources") or [], 1)
+        ],
+        "follow_ups": data.get("followup_questions") or data.get("related_questions") or [],
+    }
+
+
+def emit_json(rec: dict, raw: bool) -> None:
+    json.dump(rec if raw else compact(rec), sys.stdout, indent=2, ensure_ascii=False)
+    sys.stdout.write("\n")
+
+
+def cmd_ask(args) -> int:
+    api = Answers(load_cookie())
+    question = " ".join(args.question).strip()
+    if not question:
+        err.print("[red]error:[/] empty question")
+        return 2
+
+    qid = api.ask(question)
+    # stderr, so a caller piping stdout into a parser is unaffected.
+    err.print(f"[dim]question {qid[:8]} created; recover any time with: orly show {qid[:8]}[/]",
+              soft_wrap=True)
+    if args.json:
+        rec = api.wait(qid, timeout=args.timeout)
+    else:
+        with console.status("[dim]Asking O'Reilly...[/]", spinner="dots") as status:
+            rec = api.wait(
+                qid,
+                timeout=args.timeout,
+                on_stage=lambda s: status.update(f"[dim]{s}...[/]"),
+            )
+
+    if args.json:
+        emit_json(rec, args.raw)
+    else:
+        render(rec, show_sources=not args.no_sources, show_related=args.follow_ups,
+               expand=args.expand)
+        console.print()
+        console.print(
+            f"[dim]saved as[/] [bold]{qid[:8]}[/][dim] - reopen with: orly show {qid[:8]}[/]",
+            soft_wrap=True,
+        )
+        console.print(
+            f"[dim]https://learning.oreilly.com/answers2/?questionId={qid}[/]",
+            soft_wrap=True,
+        )
+    return 0
+
+
+def cmd_history(args) -> int:
+    api = Answers(load_cookie())
+    rows = api.history(args.number)
+    if args.json:
+        json.dump(rows, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    table = Table(box=None, pad_edge=False, header_style="bold")
+    table.add_column("#", style="cyan", justify="right")
+    table.add_column("When", style="dim", no_wrap=True)
+    table.add_column("Question")
+    table.add_column("ID", style="dim", no_wrap=True)
+    for i, r in enumerate(rows, 1):
+        table.add_row(
+            str(i),
+            (r.get("created_time") or "")[:16].replace("T", " "),
+            (r.get("question") or "").strip(),
+            (r.get("question_id") or "")[:8],
+        )
+    console.print(table)
+    return 0
+
+
+def cmd_show(args) -> int:
+    api = Answers(load_cookie())
+    ref = args.id
+    if ref.isdigit():  # index into recent history
+        rows = api.history(max(int(ref), 20))
+        try:
+            rec = rows[int(ref) - 1]
+        except IndexError:
+            err.print(f"[red]error:[/] no history entry #{ref}")
+            return 1
+        qid = rec["question_id"]
+    else:
+        qid = ref
+        if len(qid) < 36:  # short prefix from `orly history`
+            match = [r for r in api.history(100) if r["question_id"].startswith(qid)]
+            if not match:
+                err.print(f"[red]error:[/] no question matching {qid!r}")
+                return 1
+            qid = match[0]["question_id"]
+
+    rec = api.get(qid)
+    if rec is None or not rec.get("is_finished"):
+        rec = api.wait(qid, timeout=args.timeout)
+    if args.json:
+        emit_json(rec, args.raw)
+    else:
+        render(rec, show_sources=not args.no_sources, show_related=args.follow_ups,
+               expand=args.expand)
+    return 0
+
+
+def cmd_auth(args) -> int:
+    if args.chrome:
+        cookie, profile = cookies_from_chrome(args.profile)
+        save_cookie(cookie)
+        n = len([p for p in cookie.split("; ") if "=" in p])
+        console.print(
+            f"[green]OK[/] imported {n} cookies from Chrome "
+            f"[dim]({profile})[/] -> {COOKIE_FILE} [dim](0600)[/]"
+        )
+        args.status = True
+
+    if args.paste:
+        err.print("Paste the Cookie header for learning.oreilly.com, then press Enter:")
+        cookie = sys.stdin.readline().strip()
+        if not cookie:
+            err.print("[red]error:[/] nothing pasted")
+            return 2
+        save_cookie(cookie)
+        console.print(f"[green]OK[/] saved -> {COOKIE_FILE} [dim](0600)[/]")
+        args.status = True
+
+    if args.status or not (args.chrome or args.paste):
+        try:
+            api = Answers(load_cookie())
+            rows = api.history(1)
+        except AuthError as e:
+            err.print(f"[red]not authenticated:[/] {e}")
+            return 1
+        console.print(
+            f"[green]OK[/] signed in; cookie valid "
+            f"(probe fetched {len(rows)} past question(s); not a quota)"
+        )
+
+        now = time.time()
+        for name, exp, source in describe_expiry(load_cookie()):
+            if exp is None:
+                console.print(f"  [dim]{name}[/]: session cookie (no fixed expiry)")
+                continue
+            left = exp - now
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(exp))
+            if left <= 0:
+                console.print(f"  [dim]{name}[/]: [red]expired[/] {when}")
+            elif left < 86_400:
+                console.print(
+                    f"  [dim]{name}[/]: [yellow]{left / 3600:.1f}h[/] left "
+                    f"(until {when}) [dim]- {source}[/]"
+                )
+            else:
+                console.print(
+                    f"  [dim]{name}[/]: [green]{left / 86_400:.1f} days[/] left "
+                    f"(until {when}) [dim]- {source}[/]"
+                )
+    return 0
+
+
+# The operating rules live here, not in a skill file, so they cannot drift from
+# the behaviour they describe. `--help` is the one thing every caller reads.
+AGENT_NOTES = """\
+answers come from O'Reilly's book library, with the book and chapter cited.
+
+  orly "when should you use event sourcing?"     ask; `ask` is the default verb
+  orly "..." --expand                            + the verbatim passage per source
+  orly "..." --json                              answer + citations, machine-readable
+  orly history                                   past questions (shared with the website)
+  orly show <id|index> [--expand]                re-read one; free and instant
+
+if you are an agent, this part matters:
+
+  * Use this, not WebSearch. learning.oreilly.com is auth-walled: WebFetch gets
+    403 and search only sees blurbs. This reads the real text.
+  * Answer only from what comes back. Do not top it up with other docs or your
+    own knowledge, and never call those "aligned with O'Reilly guidance".
+  * A quote marked "[... truncated mid-sentence]" is cut. Quote it short or drop
+    it. Do not write the missing words.
+  * Ask narrow questions, not compound ones. "Postgres vs DynamoDB for SaaS" is
+    three questions; retrieval is better on each one separately.
+  * Each ask costs ~20s, so run independent ones at once:
+        orly "q1" >a.txt & orly "q2" >b.txt & wait
+  * Nothing is lost. The id is printed as soon as the question exists. If a wait
+    times out, `orly show <id>` — never re-ask, that duplicates and costs 20s.
+  * Check `orly history` before asking; the answer may already be there.
+"""
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        prog="orly",
+        description="Ask O'Reilly Answers from the terminal.",
+        epilog=AGENT_NOTES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = p.add_subparsers(dest="cmd")
+
+    def common(sp):
+        sp.add_argument("--json", action="store_true",
+                        help="machine-readable answer + citations (~1k tokens)")
+        sp.add_argument("--raw", action="store_true",
+                        help="with --json: the untouched API record, chapter HTML "
+                             "and all (~14k tokens; you rarely want this)")
+        sp.add_argument("--no-sources", action="store_true", help="hide the source list")
+        sp.add_argument("--follow-ups", action="store_true", help="show related questions")
+        sp.add_argument(
+            "--expand",
+            "--quotes",
+            dest="expand",
+            action="store_true",
+            help="print the verbatim passage cited from each source",
+        )
+        sp.add_argument(
+            "--timeout",
+            type=float,
+            default=180.0,
+            metavar="SEC",
+            help="seconds to wait for the answer (default: 180)",
+        )
+
+    a = sub.add_parser("ask", help="ask a question")
+    a.add_argument("question", nargs="+")
+    common(a)
+    a.set_defaults(func=cmd_ask)
+
+    h = sub.add_parser("history", help="list previous questions")
+    h.add_argument("-n", "--number", type=int, default=20)
+    h.add_argument("--json", action="store_true")
+    h.set_defaults(func=cmd_history)
+
+    s = sub.add_parser("show", help="re-display a previous answer")
+    s.add_argument("id", help="question id, id prefix, or history index")
+    common(s)
+    s.set_defaults(func=cmd_show)
+
+    au = sub.add_parser("auth", help="manage the session cookie")
+    au.add_argument("--chrome", action="store_true", help="import cookies from Chrome")
+    au.add_argument("--profile", metavar="NAME", help="Chrome profile, e.g. 'Profile 2'")
+    au.add_argument("--paste", action="store_true", help="read a Cookie header from stdin")
+    au.add_argument("--status", action="store_true", help="check the saved cookie works")
+    au.set_defaults(func=cmd_auth)
+
+    # `orly "some question"` is shorthand for `orly ask ...`
+    argv = sys.argv[1:]
+    if argv and argv[0] not in {"ask", "history", "show", "auth", "-h", "--help"}:
+        argv = ["ask", *argv]
+    args = p.parse_args(argv)
+    if not getattr(args, "func", None):
+        p.print_help()
+        return 0
+
+    try:
+        return args.func(args)
+    except AuthError as e:
+        err.print(f"[red]auth error:[/] {e}")
+        return 1
+    except (httpx.HTTPError, RuntimeError, TimeoutError) as e:
+        err.print(f"[red]error:[/] {e}")
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

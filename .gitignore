@@ -1,0 +1,16 @@
+# Never commit the session. `orly auth --chrome` regenerates it locally.
+cookie
+cookies
+*.cookie
+.env
+.env.*
+
+# The real jar lives at ~/.config/orly/cookie (0600), outside this repo.
+# Kept here so a stray copy or symlink can't be staged by accident.
+config/
+.config/
+
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
