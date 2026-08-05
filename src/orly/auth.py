@@ -14,6 +14,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -63,10 +64,30 @@ def decrypt_value(encrypted: bytes, key: bytes) -> str:
         return plain[32:].decode("utf-8", "replace")
 
 
+#: How to get a Cookie header by hand. The only route that works on every
+#: platform and browser, so it is what every auth failure points at.
+PASTE_HELP = """\
+Sign in to https://learning.oreilly.com in any browser, then:
+
+  1. open DevTools (F12) -> Network
+  2. reload the page and click any request to learning.oreilly.com
+  3. under Request Headers, copy the whole value of `Cookie:`
+  4. run:  orly auth --paste     and paste it
+
+The two that matter are `orm-jwt` and `orm-rt`; copying the whole header is
+fine and simplest. For scripts and CI, set ORLY_COOKIE to the same string."""
+
+
 def chrome_profiles() -> list[Path]:
+    if sys.platform != "darwin":
+        raise AuthError(
+            "--chrome only works on macOS: it reads Chrome's cookie DB using the\n"
+            "macOS Keychain, and Linux/Windows encrypt those cookies differently.\n\n"
+            + PASTE_HELP
+        )
     base = Path.home() / "Library/Application Support/Google/Chrome"
     if not base.is_dir():
-        raise AuthError(f"No Chrome installation found at {base}")
+        raise AuthError(f"No Chrome installation found at {base}\n\n" + PASTE_HELP)
     found = [p / "Cookies" for p in sorted(base.iterdir()) if (p / "Cookies").is_file()]
     if not found:
         raise AuthError("No Chrome cookie databases found.")
@@ -205,8 +226,15 @@ def load_cookie() -> str:
     if COOKIE_FILE.is_file():
         return COOKIE_FILE.read_text().strip()
     raise AuthError(
-        "Not authenticated. Run:  orly auth --chrome\n"
-        "(or set ORLY_COOKIE to a learning.oreilly.com Cookie header)"
+        "Not authenticated.\n\n"
+        + (
+            "On macOS with Chrome:  orly auth --chrome\n"
+            "Any other setup:       orly auth --paste\n"
+            if sys.platform == "darwin"
+            else "Run:  orly auth --paste\n"
+        )
+        + "\n"
+        + PASTE_HELP
     )
 
 

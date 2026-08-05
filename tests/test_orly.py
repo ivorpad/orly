@@ -6,8 +6,13 @@ import json
 
 import pytest
 
-from orly.auth import jwt_expiry
+from orly.auth import AUTH_COOKIES, jwt_expiry
 from orly.render import CITE, clean_quote, compact, flag_truncation
+
+
+def header_names(cookie: str) -> set[str]:
+    """The check cmd_auth runs on a pasted Cookie header."""
+    return {p.split("=", 1)[0].strip() for p in cookie.split(";") if "=" in p}
 
 
 def b64(payload: dict) -> str:
@@ -72,6 +77,31 @@ class TestJwtExpiry:
     @pytest.mark.parametrize("bad", ["", "not.a.jwt", "onlyonepart", b64({"no": "exp"})])
     def test_returns_none_rather_than_raising(self, bad):
         assert jwt_expiry(bad) is None
+
+
+class TestPastedHeader:
+    """Either auth cookie alone is a 401, so a partial paste must be rejected
+    at the door rather than saved and failing later against the API."""
+
+    def test_a_full_browser_header_passes(self):
+        raw = "_abck=x; groot_sessionid=abc; orm-jwt=eyJhb.cD.ef; orm-rt=deadbeef; _ga=1"
+        assert not [c for c in AUTH_COOKIES if c not in header_names(raw)]
+
+    @pytest.mark.parametrize(
+        "raw,absent",
+        [
+            ("orm-jwt=abc; other=x", "orm-rt"),
+            ("orm-rt=abc", "orm-jwt"),
+            ("groot_sessionid=abc", "orm-jwt"),  # looks like a session, is not
+            ("", "orm-jwt"),
+        ],
+    )
+    def test_a_partial_paste_is_caught(self, raw, absent):
+        assert absent in [c for c in AUTH_COOKIES if c not in header_names(raw)]
+
+    def test_whitespace_around_names_is_tolerated(self):
+        raw = "  orm-jwt=a ;  orm-rt=b  "
+        assert not [c for c in AUTH_COOKIES if c not in header_names(raw)]
 
 
 class TestCompact:

@@ -28,12 +28,39 @@ Needs [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 uv tool install --editable .
-orly auth --chrome        # imports your signed-in session from Chrome
 ```
 
-`auth --chrome` decrypts Chrome's cookie store, which means one Keychain prompt. The
+You need your own O'Reilly subscription; this is a client, not a way around one. The
 session is cached at `~/.config/orly/cookie` (mode 0600) and never leaves the machine.
-You need your own O'Reilly subscription; this is a client, not a way around one.
+
+### Authenticating
+
+**macOS + Chrome** — automatic:
+
+```bash
+orly auth --chrome              # one Keychain prompt; --profile "Profile 2" to pick one
+```
+
+**Anything else** — paste the header once:
+
+```bash
+orly auth --paste               # prints the DevTools walkthrough, then reads stdin
+```
+
+Sign in at learning.oreilly.com, open DevTools → Network, click any request to that
+domain, and copy the whole `Cookie:` request header. `orm-jwt` and `orm-rt` are the two
+that matter — either alone is a 401, so copy the lot rather than picking them out. A
+paste missing one is rejected before it is saved.
+
+For scripts, CI, and containers, set `ORLY_COOKIE` to the same string; it takes priority
+over the cached file.
+
+`orly auth --status` checks the session and prints both expiries.
+
+> `--chrome` is macOS-only. It reads Chrome's cookie DB via the Keychain, and Linux
+> (gnome-keyring/kwallet) and Windows (DPAPI) encrypt those cookies differently. Rather
+> than ship crypto I cannot test, those platforms use `--paste`, which works everywhere
+> and with any browser.
 
 ## Use
 

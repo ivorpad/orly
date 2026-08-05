@@ -7,6 +7,7 @@ posted question 404s for a couple of seconds before its record exists.
 
 from __future__ import annotations
 
+import sys
 import time
 
 import httpx
@@ -88,8 +89,15 @@ class Answers:
         self.flush_cookies()
         if r.status_code in (401, 403):
             raise AuthError(
-                "O'Reilly rejected the session cookie (HTTP "
-                f"{r.status_code}). Re-run:  orly auth --chrome"
+                f"O'Reilly rejected the session cookie (HTTP {r.status_code}).\n"
+                + (
+                    "Re-run:  orly auth --chrome\n"
+                    "If that keeps failing, sign in to learning.oreilly.com in "
+                    "Chrome first."
+                    if sys.platform == "darwin"
+                    else "Refresh it with:  orly auth --paste\n"
+                    "(run `orly auth --paste` with no input piped for instructions)"
+                )
             )
         r.raise_for_status()
         return r

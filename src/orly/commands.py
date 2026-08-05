@@ -10,8 +10,10 @@ from rich.table import Table
 
 from .api import Answers
 from .auth import (
+    AUTH_COOKIES,
     AuthError,
     COOKIE_FILE,
+    PASTE_HELP,
     cookies_from_chrome,
     describe_expiry,
     load_cookie,
@@ -125,11 +127,26 @@ def cmd_auth(args) -> int:
         args.status = True
 
     if args.paste:
-        err.print("Paste the Cookie header for learning.oreilly.com, then press Enter:")
+        # Only print the walkthrough when a human is typing. With a pipe
+        # (`echo ... | orly auth --paste`) it is noise.
+        if sys.stdin.isatty():
+            err.print(PASTE_HELP)
+            err.print()
+        err.print("Paste the Cookie header, then press Enter:")
         cookie = sys.stdin.readline().strip()
         if not cookie:
             err.print("[red]error:[/] nothing pasted")
             return 2
+
+        names = {p.split("=", 1)[0].strip() for p in cookie.split(";") if "=" in p}
+        if missing := [c for c in AUTH_COOKIES if c not in names]:
+            err.print(
+                f"[red]error:[/] that header is missing {', '.join(missing)}. "
+                "Both `orm-jwt` and `orm-rt` are required -- either alone is a 401.\n"
+                "Copy the whole Cookie value rather than picking cookies out of it."
+            )
+            return 2
+
         save_cookie(cookie)
         console.print(f"[green]OK[/] saved -> {COOKIE_FILE} [dim](0600)[/]")
         args.status = True
