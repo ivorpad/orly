@@ -14,6 +14,10 @@ import httpx
 
 from .auth import AuthError, save_cookie
 
+
+class NotFound(Exception):
+    """A question id that does not resolve. Retrying will not help."""
+
 BASE = "https://learning.oreilly.com/api/v1/miso-answers-relay-service"
 
 FQ = (
@@ -156,7 +160,7 @@ class Answers:
             rec = self.get(qid)
             if rec is None:
                 if time.monotonic() > appear_by:
-                    raise RuntimeError(
+                    raise TimeoutError(
                         f"Question {qid} has not appeared yet.\n"
                         f"It WAS created, so nothing is lost: it is still being "
                         f"written, which happens when several asks run at once.\n"

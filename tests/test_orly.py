@@ -7,7 +7,16 @@ import json
 import pytest
 
 from orly.auth import AUTH_COOKIES, jwt_expiry
+from orly.cli import EX_AUTH, EX_FAIL, EX_NOTFOUND, EX_TIMEOUT
+from orly.commands import normalise_question
 from orly.render import CITE, clean_quote, compact, flag_truncation
+
+
+def test_exit_codes_are_distinct():
+    """An agent picks retry-vs-pivot off these, so they must not collide."""
+    codes = [0, 2, EX_FAIL, EX_NOTFOUND, EX_AUTH, EX_TIMEOUT]
+    assert len(set(codes)) == len(codes)
+    assert all(0 <= c < 256 for c in codes)
 
 
 def header_names(cookie: str) -> set[str]:
@@ -102,6 +111,33 @@ class TestPastedHeader:
     def test_whitespace_around_names_is_tolerated(self):
         raw = "  orm-jwt=a ;  orm-rt=b  "
         assert not [c for c in AUTH_COOKIES if c not in header_names(raw)]
+
+
+class TestNormaliseQuestion:
+    """--reuse matches on this. Too loose and it hands back the wrong answer;
+    too tight and it never fires, which is how it shipped the first time."""
+
+    def test_punctuation_and_case_do_not_matter(self):
+        assert normalise_question("What is a bloom filter?") == normalise_question(
+            "what is a bloom filter"
+        )
+
+    def test_whitespace_is_collapsed(self):
+        assert normalise_question("  what  is\na bloom filter ") == "what is a bloom filter"
+
+    def test_different_questions_stay_different(self):
+        assert normalise_question("what is a bloom filter") != normalise_question(
+            "what is a cuckoo filter"
+        )
+
+    def test_negation_is_not_normalised_away(self):
+        assert normalise_question("when to use event sourcing") != normalise_question(
+            "when not to use event sourcing"
+        )
+
+    def test_handles_empty(self):
+        assert normalise_question("") == ""
+        assert normalise_question(None) == ""
 
 
 class TestCompact:

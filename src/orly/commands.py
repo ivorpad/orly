@@ -8,7 +8,7 @@ import time
 
 from rich.table import Table
 
-from .api import Answers
+from .api import Answers, NotFound
 from .auth import (
     AUTH_COOKIES,
     AuthError,
@@ -22,12 +22,56 @@ from .auth import (
 from .console import console, err
 from .render import emit_json, render
 
+def normalise_question(q: str) -> str:
+    """Key for matching a question against one already asked.
+
+    Deliberately shallow: case, surrounding whitespace, and trailing
+    punctuation only. "what is a bloom filter" and "What is a bloom filter?"
+    are the same question; anything cleverer risks handing back the answer to
+    a different one.
+    """
+    return " ".join((q or "").split()).rstrip("?.!").strip().casefold()
+
+
 def cmd_ask(args) -> int:
     api = Answers(load_cookie())
     question = " ".join(args.question).strip()
+
+    # `orly ask -` used to ask the literal question "-": a wasted 20s round
+    # trip and a junk history entry.
+    if question == "-":
+        question = sys.stdin.read().strip()
+
     if not question:
         err.print("[red]error:[/] empty question")
         return 2
+    if len(question) < 5:
+        err.print(
+            f"[red]error:[/] {question!r} is too short to be a question. "
+            "Pass it as one argument, or use `-` to read it from stdin."
+        )
+        return 2
+
+    # An ask is not idempotent: it always creates a new question and costs ~20s.
+    # An agent retrying after a timeout therefore duplicates its own work. With
+    # --reuse, an identical question already answered is returned instead.
+    if args.reuse:
+        want = normalise_question(question)
+        for row in api.history(args.reuse_scan):
+            if normalise_question(row.get("question", "")) == want and row.get(
+                "is_finished"
+            ):
+                qid = row["question_id"]
+                err.print(f"reusing answer {qid[:8]} (--reuse); ask again with --no-reuse")
+                rec = api.get(qid)
+                if rec:
+                    if args.json:
+                        emit_json(rec, args.raw)
+                    else:
+                        render(rec, show_sources=not args.no_sources,
+                               show_related=args.follow_ups, expand=args.expand)
+                    return 0
+                break
 
     qid = api.ask(question)
     # stderr, so a caller piping stdout into a parser is unaffected.
@@ -92,16 +136,16 @@ def cmd_show(args) -> int:
         try:
             rec = rows[int(ref) - 1]
         except IndexError:
-            err.print(f"[red]error:[/] no history entry #{ref}")
-            return 1
+            raise NotFound(
+                f"no history entry #{ref} (only {len(rows)} questions)"
+            ) from None
         qid = rec["question_id"]
     else:
         qid = ref
         if len(qid) < 36:  # short prefix from `orly history`
             match = [r for r in api.history(100) if r["question_id"].startswith(qid)]
             if not match:
-                err.print(f"[red]error:[/] no question matching {qid!r}")
-                return 1
+                raise NotFound(f"no question matching {ref!r} in the last 100")
             qid = match[0]["question_id"]
 
     rec = api.get(qid)
