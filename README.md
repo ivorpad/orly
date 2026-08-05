@@ -24,11 +24,10 @@ Sources
 
 ## Install
 
-Needs [`uv`](https://docs.astral.sh/uv/) — dependencies are declared inline (PEP 723) and
-fetched on first run. Nothing to install beyond the script.
+Needs [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-ln -s "$PWD/orly" ~/.local/bin/orly
+uv tool install --editable .
 orly auth --chrome        # imports your signed-in session from Chrome
 ```
 
@@ -82,6 +81,30 @@ The server re-issues both cookies on every response, so `orly` writes the jar ba
 atomically after each call and the session rolls 30 days forward from last use. In
 practice you re-run `auth --chrome` only after a month idle, or if O'Reilly invalidates
 the session.
+
+## Layout
+
+```
+src/orly/
+  cli.py         argparse, dispatch, and the agent notes printed by --help
+  commands.py    one function per subcommand
+  api.py         the Answers HTTP client
+  auth.py        Chrome cookie extraction and session persistence
+  render.py      terminal output and the JSON shapes
+  console.py     the two shared rich consoles
+tests/
+```
+
+This started as one 847-line file. The split follows the seams that were already there —
+auth, transport, presentation, dispatch — rather than a layer diagram imposed on top.
+Sub-commands stay in a single `commands.py`; four functions totalling ~150 lines do not
+need a package of their own, and the cost of splitting further is more import plumbing
+than it saves in navigation.
+
+What was given up: the old single file carried its dependencies inline (PEP 723) and ran
+straight from `uv run`, so it could be copied anywhere and just work. That is a real loss.
+It is paid for with a test suite, a proper entry point, and modules you can read in one
+sitting.
 
 ## Caveats
 
