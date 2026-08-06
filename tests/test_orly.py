@@ -6,7 +6,8 @@ import json
 
 import pytest
 
-from orly.auth import AUTH_COOKIES, jwt_expiry
+from orly.api import same_host
+from orly.auth import AUTH_COOKIES, HOST_FILTER, jwt_expiry
 from orly.cli import EX_AUTH, EX_FAIL, EX_NOTFOUND, EX_TIMEOUT
 from orly.commands import normalise_question
 from orly.render import CITE, clean_quote, compact, flag_truncation
@@ -111,6 +112,61 @@ class TestPastedHeader:
     def test_whitespace_around_names_is_tolerated(self):
         raw = "  orm-jwt=a ;  orm-rt=b  "
         assert not [c for c in AUTH_COOKIES if c not in header_names(raw)]
+
+
+class TestSameHost:
+    """`next` in a paginated response is server-controlled, and the jar has no
+    domain, so an off-host URL followed here would hand over the session."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "/user-question-history/",              # ours, relative to base_url
+            "/user-question-history/?page=2",
+            "https://learning.oreilly.com/api/v1/x/?page=2",
+        ],
+    )
+    def test_allows_our_own_urls(self, url):
+        assert same_host(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://evil.example.net/page2",
+            "//evil.example.net/x",                       # protocol-relative
+            "https://learning.oreilly.com.attacker.io/x",  # suffix, not the host
+            "https://notoreilly.com/x",
+            "http://learning.oreilly.com/x",               # right host, cleartext
+        ],
+    )
+    def test_refuses_anywhere_else(self, url):
+        assert not same_host(url)
+
+
+class TestCookieHostFilter:
+    """`LIKE '%oreilly.com'` also matched domains anyone can register, whose
+    cookies would then be posted to learning.oreilly.com."""
+
+    @pytest.fixture
+    def match(self):
+        """Run the real WHERE clause against one host_key at a time."""
+        import sqlite3
+
+        con = sqlite3.connect(":memory:")
+        sql = f"SELECT EXISTS(SELECT 1 FROM (SELECT ? AS host_key) WHERE {HOST_FILTER})"
+        return lambda host: bool(con.execute(sql, (host,)).fetchone()[0])
+
+    @pytest.mark.parametrize(
+        "host", ["learning.oreilly.com", ".oreilly.com", "oreilly.com", "www.oreilly.com"]
+    )
+    def test_keeps_real_oreilly_hosts(self, match, host):
+        assert match(host)
+
+    @pytest.mark.parametrize(
+        "host", ["notoreilly.com", "evil-oreilly.com", "oreilly.com.attacker.io"]
+    )
+    def test_drops_lookalikes(self, match, host):
+        assert not match(host)
 
 
 class TestNormaliseQuestion:

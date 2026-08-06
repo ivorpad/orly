@@ -27,6 +27,14 @@ class AuthError(Exception):
     pass
 
 
+#: Which rows in Chrome's cookie DB are actually O'Reilly's. The obvious
+#: `host_key LIKE '%oreilly.com'` also matches domains anyone can register --
+#: notoreilly.com, evil-oreilly.com -- and those cookies would then be swept
+#: into the jar and posted to learning.oreilly.com. Chrome stores a domain
+#: cookie as `.oreilly.com`, which the leading `%` still covers.
+HOST_FILTER = "host_key = 'oreilly.com' OR host_key LIKE '%.oreilly.com'"
+
+
 def keychain_password() -> str:
     """Chrome's cookie encryption passphrase, from the login keychain."""
     for args in (
@@ -122,7 +130,7 @@ def cookies_from_chrome(profile: str | None = None) -> str:
                 con = sqlite3.connect(f"file:{copy}?immutable=0", uri=True)
                 rows = con.execute(
                     "SELECT name, value, encrypted_value FROM cookies "
-                    "WHERE host_key LIKE '%oreilly.com'"
+                    f"WHERE {HOST_FILTER}"
                 ).fetchall()
                 con.close()
             except sqlite3.Error:
@@ -184,7 +192,7 @@ def chrome_expiries() -> dict[str, float]:
                         shutil.copy2(side, copy.with_name(copy.name + suffix))
                 con = sqlite3.connect(f"file:{copy}?immutable=0", uri=True)
                 rows = con.execute(
-                    "SELECT name, expires_utc FROM cookies WHERE host_key LIKE '%oreilly.com'"
+                    f"SELECT name, expires_utc FROM cookies WHERE {HOST_FILTER}"
                 ).fetchall()
                 con.close()
             except (OSError, sqlite3.Error):
@@ -246,7 +254,11 @@ def save_cookie(cookie: str) -> None:
     first, and a concurrent reader that lands in that window gets an empty jar
     and reports a bogus auth failure. Write a sibling temp file and rename.
     """
-    CONFIG.mkdir(parents=True, exist_ok=True)
+    CONFIG.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # mode= above only applies when mkdir actually creates it, so an install
+    # that predates this line keeps whatever umask gave it (0755 by default).
+    with contextlib.suppress(OSError):
+        CONFIG.chmod(0o700)
     fd, tmp = tempfile.mkstemp(dir=CONFIG, prefix=".cookie.")
     try:
         with os.fdopen(fd, "w") as fh:

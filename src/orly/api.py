@@ -19,6 +19,7 @@ class NotFound(Exception):
     """A question id that does not resolve. Retrying will not help."""
 
 BASE = "https://learning.oreilly.com/api/v1/miso-answers-relay-service"
+API_HOST = httpx.URL(BASE).host
 
 FQ = (
     '(type:book OR type:article OR type:video) AND language:("en" OR "EN" OR '
@@ -35,6 +36,22 @@ FIELDS = [
     "authors",
     "html",
 ]
+
+
+def same_host(url: str) -> bool:
+    """Is a URL the server handed back still on the API host, over TLS?
+
+    The jar is built from a plain dict, and httpx gives those cookies no domain,
+    so they attach to whatever host a request goes to. Paginated responses carry
+    a server-controlled `next`, so following one blindly is all it would take to
+    post `orm-jwt` and `orm-rt` somewhere else. A relative URL resolves against
+    base_url and is fine; anything carrying its own host has to match, and http
+    is refused because the cookies would go over the wire in the clear.
+    """
+    u = httpx.URL(url)
+    if not u.host:
+        return True
+    return u.host == API_HOST and u.scheme == "https"
 
 
 class Answers:
@@ -146,6 +163,10 @@ class Answers:
         out: list[dict] = []
         url = "/user-question-history/"
         while url and len(out) < limit:
+            if not same_host(url):
+                raise RuntimeError(
+                    f"refusing to follow a pagination URL off {API_HOST}: {url}"
+                )
             page = self._check(self.http.get(url)).json()
             out.extend(page.get("results", []))
             url = page.get("next")

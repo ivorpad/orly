@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import sys
 import time
@@ -176,8 +177,14 @@ def cmd_auth(args) -> int:
         if sys.stdin.isatty():
             err.print(PASTE_HELP)
             err.print()
-        err.print("Paste the Cookie header, then press Enter:")
-        cookie = sys.stdin.readline().strip()
+            # A plain readline() echoes, which leaves the whole live session
+            # sitting in scrollback and in any tmux/screen buffer. getpass
+            # reads it without echo. Nothing appearing as you paste is the
+            # point, not a hang -- hence saying so in the prompt.
+            cookie = getpass.getpass("Paste the Cookie header (input hidden), then Enter: ").strip()
+        else:
+            # getpass would read /dev/tty here and ignore the pipe entirely.
+            cookie = sys.stdin.readline().strip()
         if not cookie:
             err.print("[red]error:[/] nothing pasted")
             return 2

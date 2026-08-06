@@ -50,7 +50,8 @@ orly auth --paste               # prints the DevTools walkthrough, then reads st
 Sign in at learning.oreilly.com, open DevTools → Network, click any request to that
 domain, and copy the whole `Cookie:` request header. `orm-jwt` and `orm-rt` are the two
 that matter — either alone is a 401, so copy the lot rather than picking them out. A
-paste missing one is rejected before it is saved.
+paste missing one is rejected before it is saved. Nothing appears on screen as you paste;
+the input is hidden so the session does not end up in your scrollback.
 
 For scripts, CI, and containers, set `ORLY_COOKIE` to the same string; it takes priority
 over the cached file.
