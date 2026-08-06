@@ -7,6 +7,7 @@ posted question 404s for a couple of seconds before its record exists.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 
@@ -21,7 +22,15 @@ class NotFound(Exception):
 BASE = "https://learning.oreilly.com/api/v1/miso-answers-relay-service"
 API_HOST = httpx.URL(BASE).host
 
-FQ = (
+#: Retrieval filter. Content type and language only.
+#:
+#: What used to follow this was a list of `required_p_permissions` exclusions,
+#: which spell out exactly what one subscription is and is not entitled to, so
+#: it is not shipped. Without them the search also reaches content your own
+#: account may not be able to open. To pin it to your entitlements, capture the
+#: `fq` your browser sends (DevTools > Network, the POST to /questions/) and
+#: put that string in ORLY_FQ.
+DEFAULT_FQ = (
     '(type:book OR type:article OR type:video) AND language:("en" OR "EN" OR '
     '"en-au" OR "en-gb" OR "en-GB" OR "en-us" OR "en-US")'
 )
@@ -125,7 +134,7 @@ class Answers:
 
     def ask(self, question: str, source_page: str = "answers") -> str:
         payload = {
-            "fq": FQ,
+            "fq": os.environ.get("ORLY_FQ") or DEFAULT_FQ,
             "source_fl": FIELDS,
             "related_resource_fl": FIELDS,
             "cite_link": True,

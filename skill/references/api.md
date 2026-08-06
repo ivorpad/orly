@@ -30,10 +30,12 @@ Base: `https://learning.oreilly.com/api/v1/miso-answers-relay-service`
 }
 ```
 
-`fq` encodes the account's entitlements — which content types are searched and which
-permission tiers are excluded. Copy it verbatim from `orly` (the `FQ` constant); a
-wrong `fq` silently changes which books are eligible. It goes stale if the
-subscription changes.
+`fq` selects which content types are searched and which permission tiers are excluded.
+The tier exclusions describe the account's entitlements, so `orly` ships only the
+content-type and language half (`DEFAULT_FQ`) and reads a full one from `ORLY_FQ` if you
+set it. Capture your own from the POST the web app makes; a wrong `fq` silently changes
+which books are eligible, and one captured elsewhere goes stale when that subscription
+changes.
 
 ## Two behaviours that will bite you
 

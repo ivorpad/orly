@@ -136,9 +136,13 @@ sitting.
 
 ## Caveats
 
-This talks to a private, undocumented API that can change without notice. The retrieval
-filter (`FQ` in the script) encodes your account's entitlements as captured at build time;
-if your subscription changes it will go stale and should be re-captured.
+This talks to a private, undocumented API that can change without notice.
+
+The retrieval filter ships as content-type and language only (`DEFAULT_FQ` in `api.py`).
+The real one the web app sends also carries a list of permission exclusions, which spell
+out precisely what a subscription is entitled to, so that is not in here. The cost is that
+search can surface a result your account cannot open. To pin it to your own entitlements,
+copy the `fq` from the POST your browser makes to `/questions/` and set `ORLY_FQ` to it.
 
 `skill/references/api.md` documents the endpoints, the polling behaviour, and the cookie
 scheme.
