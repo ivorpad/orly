@@ -27,6 +27,12 @@ Sources
 Needs [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
+uv tool install 'git+https://github.com/ivorpad/orly.git@v0.2.0'
+```
+
+For development, install from a local checkout:
+
+```bash
 uv tool install --editable .
 ```
 
@@ -71,9 +77,36 @@ orly "..." --expand                          # + the verbatim passage from each 
 orly "..." --json                            # answer + citations, machine-readable
 orly history                                 # past questions (shared with the website)
 orly show 3 --expand                         # re-read one by index, id, or id prefix
+orly read 42daa7c4 1                         # prose and code from source 1's chapter
+orly read 42daa7c4 1 --code --from-citation --limit 1
+orly read https://learning.oreilly.com/library/view/-/9781098100650/ch14.html
 orly auth --status                           # session expiry
 orly --help                                  # everything, including the agent notes
 ```
+
+`read` fetches one chapter using your existing session. It prints prose, code,
+and numbered explanations, with book references and links to other chapters or
+examples. `--code` keeps examples, captions, and their numbered explanations.
+`--from-citation` starts where the cited passage ends; `--start 'some text'`
+works for either an answer source or a URL. Matching ignores whitespace; citation
+matching can use a unique suffix when the search excerpt's formatting differs.
+
+The default limit is 12 whole blocks. Use `--limit N` to adjust it. A code block
+is never cut in half and can be large. `--json` returns structured blocks,
+references, and a `remaining_blocks` count; `--raw` prints the entire chapter
+HTML, or the full chapter payload with `--json`. Selection flags cannot be
+combined with `--raw`. This reads one file per call, without crawling the book.
+
+For the code immediately after a citation:
+
+```bash
+orly read 42daa7c4 1 --code --from-citation --limit 1  # Fluent Python, Example 15-5
+orly read 72a52ac5 5 --code --from-citation --limit 1  # Robust Python, load_restaurant
+```
+
+Answer records only contain the cited passage, usually at most 1,200 characters.
+Their `sources[].html` is the book's catalog blurb, including under `show --json
+--raw`; it does not contain the chapter. Use `read` for the book text.
 
 Each ask takes ~20s. There is no streaming — the API returns nothing until the answer is
 complete — so run independent questions at once:
@@ -117,6 +150,7 @@ src/orly/
   cli.py         argparse, dispatch, and the agent notes printed by --help
   commands.py    one function per subcommand
   api.py         the Answers HTTP client
+  chapter.py     chapter HTML extraction and block selection
   auth.py        Chrome cookie extraction and session persistence
   render.py      terminal output and the JSON shapes
   console.py     the two shared rich consoles

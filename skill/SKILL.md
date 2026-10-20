@@ -5,6 +5,7 @@ description: >-
   with real book/chapter citations. Invoke for: O'Reilly, Safari Books, learning.oreilly.com,
   "what do the books say about X", grounded/cited technical answer, research X with real
   sources. Those URLs are auth-walled — WebFetch returns 403 and WebSearch only sees blurbs.
+disable-model-invocation: true
 ---
 
 # orly

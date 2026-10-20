@@ -9,7 +9,8 @@ import time
 
 from rich.table import Table
 
-from .api import Answers, NotFound
+from .api import Answers, NotFound, UsageError
+from .chapter import chapter_text, select_chapter
 from .auth import (
     AUTH_COOKIES,
     AuthError,
@@ -129,10 +130,10 @@ def cmd_history(args) -> int:
     return 0
 
 
-def cmd_show(args) -> int:
-    api = Answers(load_cookie())
-    ref = args.id
+def resolve_answer(api: Answers, ref: str, timeout: float) -> dict:
     if ref.isdigit():  # index into recent history
+        if int(ref) < 1:
+            raise NotFound("history indexes start at 1")
         rows = api.history(max(int(ref), 20))
         try:
             rec = rows[int(ref) - 1]
@@ -151,12 +152,61 @@ def cmd_show(args) -> int:
 
     rec = api.get(qid)
     if rec is None or not rec.get("is_finished"):
-        rec = api.wait(qid, timeout=args.timeout)
+        rec = api.wait(qid, timeout=timeout)
+    return rec
+
+
+def cmd_show(args) -> int:
+    api = Answers(load_cookie())
+    rec = resolve_answer(api, args.id, args.timeout)
     if args.json:
         emit_json(rec, args.raw)
     else:
         render(rec, show_sources=not args.no_sources, show_related=args.follow_ups,
                expand=args.expand)
+    return 0
+
+
+def cmd_read(args) -> int:
+    if args.limit < 1:
+        raise UsageError("--limit must be positive")
+    if args.raw and (args.code or args.from_citation or args.start):
+        raise UsageError("--raw returns the full chapter; omit selection flags")
+    is_url = "://" in args.ref or args.ref.startswith("//")
+    if is_url and (args.source is not None or args.from_citation):
+        raise UsageError("a URL takes no source number or --from-citation; use --start TEXT")
+    if not is_url and (args.source is None or args.source < 1):
+        raise UsageError("use read <answer-id|index> <source-number> or read <chapter-url>")
+    api = Answers(load_cookie())
+    start = args.start
+    url = args.ref
+    reference = None
+    if not is_url:
+        rec = resolve_answer(api, args.ref, args.timeout)
+        sources = ((rec.get("miso_response") or {}).get("data") or {}).get("sources") or []
+        if args.source > len(sources):
+            raise NotFound(f"no source #{args.source} (answer has {len(sources)})")
+        source = sources[args.source - 1]
+        reference = {"title": source.get("title"), "chapter": source.get("child_title"),
+                     "authors": source.get("authors") or [],
+                     "answer_id": rec.get("question_id"), "source": args.source}
+        url = source.get("child_url") or ""
+        if args.from_citation:
+            from .render import clean_quote
+            start = clean_quote(source.get("highlight_text") or source.get("snippet") or "")
+            if not start:
+                raise NotFound("source has no cited passage; use --start TEXT")
+    payload = api.chapter(url)
+    if reference:
+        payload["reference"] = reference
+    result = payload if args.raw else select_chapter(
+        payload, code=args.code, start=start, limit=args.limit, citation=args.from_citation
+    )
+    if args.json:
+        json.dump(result, sys.stdout, indent=2, ensure_ascii=False)
+        sys.stdout.write("\n")
+    else:
+        print(payload["html"] if args.raw else chapter_text(result))
     return 0
 
 

@@ -197,7 +197,7 @@ class TestNormaliseQuestion:
 
 
 class TestCompact:
-    """--json was 14k tokens, two thirds of it chapter HTML nobody reads."""
+    """Compact JSON omits catalog HTML blurbs and request configuration."""
 
     @pytest.fixture
     def record(self):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from urllib.parse import quote, unquote
 
 import httpx
 
@@ -18,6 +19,10 @@ from .auth import AuthError, save_cookie
 
 class NotFound(Exception):
     """A question id that does not resolve. Retrying will not help."""
+
+
+class UsageError(Exception):
+    """Invalid command input."""
 
 BASE = "https://learning.oreilly.com/api/v1/miso-answers-relay-service"
 API_HOST = httpx.URL(BASE).host
@@ -155,6 +160,41 @@ class Answers:
         }
         r = self._check(self.http.post("/questions/", json=payload))
         return r.json()["question_id"]
+
+    def chapter(self, url: str) -> dict:
+        """Fetch exactly one EPUB file, never following an off-host redirect."""
+        import re
+
+        if not same_host(url) or not url.startswith("https://"):
+            raise UsageError("expected an https://learning.oreilly.com library chapter URL")
+        u = httpx.URL(url)
+        match = re.fullmatch(r"/library/view/[^/]+/([^/]+)/(.+)", u.path)
+        if not match:
+            raise UsageError("expected a library/view/<title>/<isbn>/<chapter> URL")
+        isbn, file = match.groups()
+        if any(part in {".", "..", ""} for part in unquote(file).split("/")) or not file.endswith((".html", ".xhtml", ".htm")):
+            raise UsageError("expected one HTML chapter file")
+        endpoint = (
+            f"https://{API_HOST}/api/v2/epubs/urn:orm:book:{quote(isbn, safe='')}/files/"
+            + quote(file, safe="/")
+        )
+        for _ in range(6):
+            r = self.http.get(endpoint, headers={"Accept": "text/html"})
+            self.flush_cookies()
+            if r.is_redirect:
+                target = str(r.url.join(r.headers.get("location", "")))
+                if not same_host(target):
+                    raise RuntimeError("refusing chapter redirect off learning.oreilly.com over HTTPS")
+                endpoint = target
+                continue
+            if r.status_code == 404:
+                raise NotFound("chapter not found")
+            self._check(r)
+            if "html" not in r.headers.get("content-type", "").lower():
+                raise RuntimeError("chapter endpoint did not return HTML")
+            return {"url": str(u.copy_with(fragment=None)), "isbn": isbn,
+                    "file": file, "html": r.text}
+        raise RuntimeError("too many chapter redirects")
 
     def get(self, qid: str) -> dict | None:
         """Fetch a question. Returns None while the record is still being created.

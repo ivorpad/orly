@@ -133,9 +133,9 @@ def render(rec: dict, show_sources: bool = True, show_related: bool = False,
 def compact(rec: dict) -> dict:
     """The answer and its citations, without the payload that blows up a caller.
 
-    The raw record is ~14k tokens, two thirds of it the full HTML of every cited
-    chapter plus a verbatim echo of the request config. Nothing reads that; it
-    just evicts the caller's context. Keep what a citation needs.
+    The raw record includes book catalog HTML blurbs, not chapter markup,
+    plus a verbatim echo of the request config. Keep what a citation needs.
+    Fetch actual chapter HTML with `orly read`.
     """
     data = (rec.get("miso_response") or {}).get("data") or {}
     return {

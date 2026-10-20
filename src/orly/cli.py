@@ -13,9 +13,9 @@ import sys
 
 import httpx
 
-from .api import NotFound
+from .api import NotFound, UsageError
 from .auth import AuthError
-from .commands import cmd_ask, cmd_auth, cmd_history, cmd_show
+from .commands import cmd_ask, cmd_auth, cmd_history, cmd_read, cmd_show
 from .console import err
 
 #: Distinct codes so a caller can decide retry-vs-pivot without parsing prose.
@@ -49,6 +49,8 @@ answers come from O'Reilly's book library, with the book and chapter cited.
   orly "..." --json                              answer + citations, machine-readable
   orly history                                   past questions (shared with the website)
   orly show <id|index> [--expand]                re-read one; free and instant
+  orly read <id|index> <n>                       read source n's chapter
+  orly read <chapter-url>                       read one book chapter directly
 
 if you are an agent, this part matters:
 
@@ -58,6 +60,16 @@ if you are an agent, this part matters:
     own knowledge, and never call those "aligned with O'Reilly guidance".
   * A quote marked "[... truncated mid-sentence]" is cut. Quote it short or drop
     it. Do not write the missing words.
+  * Sources carry only a cited passage; sources[].html is a catalog blurb.
+    To see the example after a passage, use:
+        orly read <id> <n> --code --from-citation --limit 1
+    read fetches one chapter, never a book. Default output is 12 whole blocks;
+    Prose, code, numbered explanations and reference links are kept by default.
+    --code keeps code with captions and explanations, --start TEXT starts at the end of matching
+    text, --from-citation uses the cited passage's end. If matching fails, use
+    --start with a shorter phrase or read without it. --limit N bounds blocks,
+    not characters, so one code block can still be large. --json has structured
+    blocks; --raw returns the full chapter HTML (with --json: the full payload).
   * Ask narrow questions, not compound ones. "Postgres vs DynamoDB for SaaS" is
     three questions; retrieval is better on each one separately.
   * Each ask costs ~20s, so run independent ones at once:
@@ -92,7 +104,7 @@ def main() -> int:
         sp.add_argument("--json", action="store_true",
                         help="machine-readable answer + citations (~1k tokens)")
         sp.add_argument("--raw", action="store_true",
-                        help="with --json: the untouched API record, chapter HTML "
+                        help="with --json: the untouched API record, catalog blurbs "
                              "and all (~14k tokens; you rarely want this)")
         sp.add_argument("--no-sources", action="store_true", help="hide the source list")
         sp.add_argument("--follow-ups", action="store_true", help="show related questions")
@@ -140,6 +152,19 @@ def main() -> int:
     common(s)
     s.set_defaults(func=cmd_show)
 
+    r = sub.add_parser("read", help="read one cited book chapter or chapter URL")
+    r.add_argument("ref", help="answer id, id prefix, history index, or HTTPS chapter URL")
+    r.add_argument("source", nargs="?", type=int, help="1-based source number for an answer")
+    r.add_argument("--json", action="store_true", help="structured chapter blocks")
+    r.add_argument("--raw", action="store_true", help="full HTML; with --json, full chapter payload")
+    r.add_argument("--code", action="store_true", help="only code blocks with captions")
+    anchor = r.add_mutually_exclusive_group()
+    anchor.add_argument("--from-citation", action="store_true", help="start at the cited passage's end")
+    anchor.add_argument("--start", metavar="TEXT", help="start at the end of matching chapter text")
+    r.add_argument("--limit", type=int, default=12, help="maximum whole blocks (default: 12)")
+    r.add_argument("--timeout", type=float, default=180.0, help="seconds to wait for an unfinished answer")
+    r.set_defaults(func=cmd_read)
+
     au = sub.add_parser("auth", help="manage the session cookie")
     au.add_argument("--chrome", action="store_true", help="import cookies from Chrome")
     au.add_argument("--profile", metavar="NAME", help="Chrome profile, e.g. 'Profile 2'")
@@ -149,7 +174,7 @@ def main() -> int:
 
     # `orly "some question"` is shorthand for `orly ask ...`
     argv = sys.argv[1:]
-    if argv and argv[0] not in {"ask", "history", "show", "auth", "-h", "--help"}:
+    if argv and argv[0] not in {"ask", "history", "show", "read", "auth", "-h", "--help"}:
         argv = ["ask", *argv]
     args = p.parse_args(argv)
     if not getattr(args, "func", None):
@@ -158,6 +183,9 @@ def main() -> int:
 
     try:
         return args.func(args)
+    except UsageError as e:
+        fail(args, "usage", e, 2)
+        return 2
     except AuthError as e:
         fail(args, "auth", e, EX_AUTH)
         return EX_AUTH

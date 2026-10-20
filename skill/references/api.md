@@ -53,11 +53,26 @@ Typical time to finish is 12–25s.
 | Field | Notes |
 |---|---|
 | `answer` | Markdown, with `[[^N]](url)` citation footnotes |
-| `sources[]` | `title`, `child_title` (chapter), `authors[]`, `date`, `url`, `child_url` (deep link), `highlight_text` (the cited passage), `html` (full chapter markup — huge, skip it) |
+| `sources[]` | `title`, `child_title` (chapter), `authors[]`, `date`, `url`, `child_url` (deep link), `highlight_text` (the cited passage), `html` (book catalog blurb, not chapter markup) |
 | `related_questions[]` | suggested follow-ups; often empty |
 | `related_resources[]` | same shape as sources |
 | `finish_reason` | `"success"` on a good answer |
 | `blocked_reason` | `"none"` unless refused |
+
+## Reading one chapter
+
+`orly read <answer-id> <source-number>` or `orly read <chapter-url>` fetches
+`GET https://learning.oreilly.com/api/v2/epubs/urn:orm:book:<isbn>/files/<file>`.
+The ISBN and file path come from the chapter's `child_url`; nested EPUB paths
+are preserved. This returns HTML using the same cookie session. Verified on
+2026-10-20 with Fluent Python 2e `9781492056348/ch15.html` and Robust Python
+`9781098100650/ch14.html`. The v1 book/chapter candidate returned 404.
+
+Use `--code --from-citation --limit 1` with an answer source to get the code
+after its passage. `--start TEXT` works with either input form. Default output
+contains at most 12 whole blocks, `--json` returns structured blocks and a
+remaining count, and `--raw` returns the full HTML payload. No whole-book fetch
+or crawling. Requests and redirects stay on learning.oreilly.com over HTTPS.
 
 ## Auth
 
