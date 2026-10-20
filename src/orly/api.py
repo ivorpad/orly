@@ -179,7 +179,9 @@ class Answers:
             + quote(file, safe="/")
         )
         for _ in range(6):
-            r = self.http.get(endpoint, headers={"Accept": "text/html"})
+            # Some EPUB providers reject text/html despite returning HTML.
+            # Accept their representation, then validate the response type.
+            r = self.http.get(endpoint, headers={"Accept": "*/*"})
             self.flush_cookies()
             if r.is_redirect:
                 target = str(r.url.join(r.headers.get("location", "")))

@@ -86,6 +86,7 @@ def client(handler):
 def test_endpoint_nested_path_and_full_html():
     seen = []
     def handler(req):
+        assert req.headers["Accept"] == "*/*"
         seen.append(str(req.url))
         return httpx.Response(200, text=HTML, headers={'content-type': 'text/html'})
     api = client(handler)

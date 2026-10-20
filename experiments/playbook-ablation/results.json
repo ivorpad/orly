@@ -1,0 +1,312 @@
+{
+  "date": "2026-10-20",
+  "block_limit": 12,
+  "scoring": "Human-reviewed relevance labels; exact extracted-code matching. No execution or coding-agent task benchmark.",
+  "requests": {
+    "total": 31,
+    "question_submissions": 5,
+    "http_429": 0,
+    "http_406": 5,
+    "minimum_request_start_spacing_seconds": 5
+  },
+  "cases": [
+    {
+      "language": "python",
+      "book": "Fluent Python, 2nd Edition",
+      "chapter": "18. with, match, and else Blocks",
+      "question_id": "7c59553d-0a05-43e0-9361-c3ef6155b870",
+      "requested_book": "Fluent Python, 2nd Edition",
+      "retrieval_note": null,
+      "chapter_sha256": "c9323a53b0984e135324565a5c02114a8cc1ee1a3f548a1542d57688e410bfc1",
+      "code_blocks_in_chapter": 48,
+      "variants": {
+        "B_default12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 1875,
+          "remaining_blocks": 397,
+          "relevant_code": false
+        },
+        "C_code12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 12,
+          "captions": 11,
+          "annotations": 36,
+          "characters": 3441,
+          "remaining_blocks": 36,
+          "relevant_code": true
+        },
+        "D_citation_code12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 12,
+          "captions": 10,
+          "annotations": 5,
+          "characters": 4899,
+          "remaining_blocks": 28,
+          "relevant_code": false
+        },
+        "E_citation_mixed12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 2,
+          "captions": 2,
+          "annotations": 0,
+          "characters": 1998,
+          "remaining_blocks": 274,
+          "relevant_code": false
+        }
+      },
+      "reviewed_relevant_block_indices": [
+        44,
+        115
+      ],
+      "curated_code_reference": {
+        "url": "https://learning.oreilly.com/library/view/-/9781492056348/ch18.html#looking_glass_ex",
+        "label": "Example 18-3, mirror.py",
+        "sha256": "40f982c5f1d25b5ca347158cd259b36a2f4c49fda1531f015bcaf6cd2c395061"
+      },
+      "prototype_adapter_used": false
+    },
+    {
+      "language": "rust",
+      "book": "Programming Rust, 2nd Edition",
+      "chapter": "7. Error Handling",
+      "question_id": "1d254d03-c235-4845-9af3-94553ccb51f2",
+      "requested_book": "Programming Rust, 2nd Edition",
+      "retrieval_note": null,
+      "chapter_sha256": "3efdf11f5c4a53e0181a97bcf05f1215f6b1f479c6477a2204c5d249645618c2",
+      "code_blocks_in_chapter": 40,
+      "variants": {
+        "B_default12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 1126,
+          "remaining_blocks": 160,
+          "relevant_code": false
+        },
+        "C_code12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 12,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 1817,
+          "remaining_blocks": 28,
+          "relevant_code": true
+        },
+        "D_citation_code12": {
+          "status": "anchor_not_found",
+          "message": "cited passage/start text not found in chapter; read without --from-citation or use --start TEXT",
+          "relevant_code": false
+        },
+        "E_citation_mixed12": {
+          "status": "anchor_not_found",
+          "message": "cited passage/start text not found in chapter; read without --from-citation or use --start TEXT",
+          "relevant_code": false
+        }
+      },
+      "reviewed_relevant_block_indices": [
+        77,
+        88
+      ],
+      "curated_code_reference": {
+        "url": "https://learning.oreilly.com/library/view/-/9781492052586/ch07.html#propagating-errors",
+        "label": "Propagating Errors, move_all",
+        "sha256": "d9ee5b9c255c69199729d237ba229fdb7ecdf92825f3fb4002faf4749325718b"
+      },
+      "prototype_adapter_used": false
+    },
+    {
+      "language": "go",
+      "book": "100 Go Mistakes and How to Avoid Them",
+      "chapter": "4 Control structures",
+      "question_id": "05208c50-adb3-45af-a1ac-74edbfbba51b",
+      "requested_book": "Learning Go, 2nd Edition",
+      "retrieval_note": "Requested title had no usable chapter citation; selected the alternate book chapter returned in the same answer.",
+      "chapter_sha256": "c014be2f017d2c4e2fd4c3277ab38eb591f9bd684cfa1b378b42ff15dd92f231",
+      "code_blocks_in_chapter": 37,
+      "variants": {
+        "B_default12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 1062,
+          "remaining_blocks": 240,
+          "relevant_code": false
+        },
+        "C_code12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 12,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 1296,
+          "remaining_blocks": 25,
+          "relevant_code": false
+        },
+        "D_citation_code12": {
+          "status": "ok",
+          "blocks": 2,
+          "code_blocks": 2,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 668,
+          "remaining_blocks": 0,
+          "relevant_code": true
+        },
+        "E_citation_mixed12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 2,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 2258,
+          "remaining_blocks": 9,
+          "relevant_code": true
+        }
+      },
+      "reviewed_relevant_block_indices": [
+        232,
+        237
+      ],
+      "curated_code_reference": {
+        "url": "https://learning.oreilly.com/library/view/-/9781617299599/OEBPS/Text/04.htm#pgfId-1145048",
+        "label": "Mistake #35, readFiles/readFile helper solution",
+        "sha256": "1a64ba326b30070a8f5b26fc7dc4ce5f56d1f5b25dd7de617dde18d9cc36f658"
+      },
+      "prototype_adapter_used": false
+    },
+    {
+      "language": "java",
+      "book": "Effective Java, 3rd Edition",
+      "chapter": "2 Creating and Destroying Objects",
+      "question_id": "3942cff8-4141-40d4-8240-e13af9b0390f",
+      "requested_book": "Effective Java, 3rd Edition",
+      "retrieval_note": null,
+      "chapter_sha256": "2b1943ac5738eb9a4232f95e41582b5c03b0fd84385ce9d7374087d6995f2fa5",
+      "code_blocks_in_chapter": 41,
+      "variants": {
+        "B_default12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 1,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 3335,
+          "remaining_blocks": 221,
+          "relevant_code": false
+        },
+        "C_code12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 12,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 2953,
+          "remaining_blocks": 29,
+          "relevant_code": false
+        },
+        "D_citation_code12": {
+          "status": "ok",
+          "blocks": 0,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 0,
+          "remaining_blocks": 0,
+          "relevant_code": false
+        },
+        "E_citation_mixed12": {
+          "status": "ok",
+          "blocks": 1,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 383,
+          "remaining_blocks": 0,
+          "relevant_code": false
+        }
+      },
+      "reviewed_relevant_block_indices": [
+        224,
+        227,
+        231
+      ],
+      "curated_code_reference": {
+        "url": "https://learning.oreilly.com/library/view/-/9780134686097/ch2.xhtml#pch2ex38",
+        "label": "Item 9, firstLineOfFile using try-with-resources",
+        "sha256": "cde1a6709153929ab5bf9c7fdaa669e879f35fa069501de9a86d7598784d62c6"
+      },
+      "prototype_adapter_used": false
+    },
+    {
+      "language": "javascript",
+      "book": "Advanced JavaScript",
+      "chapter": "C11078_2_Final_EPUB_SW",
+      "question_id": "50fb8367-531f-453e-b254-b3ca6016fad7",
+      "requested_book": "JavaScript: The Definitive Guide, 7th Edition",
+      "retrieval_note": "Requested title had no usable chapter citation; selected the alternate book chapter returned in the same answer.",
+      "chapter_sha256": "1788e63d74a11f904341534c8c83fb4009831cb11e38990bd729f3810c0aa629",
+      "code_blocks_in_chapter": 0,
+      "variants": {
+        "B_default12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 1317,
+          "remaining_blocks": 623,
+          "relevant_code": false
+        },
+        "C_code12": {
+          "status": "ok",
+          "blocks": 0,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 0,
+          "remaining_blocks": 0,
+          "relevant_code": false
+        },
+        "D_citation_code12": {
+          "status": "ok",
+          "blocks": 0,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 0,
+          "remaining_blocks": 0,
+          "relevant_code": false
+        },
+        "E_citation_mixed12": {
+          "status": "ok",
+          "blocks": 12,
+          "code_blocks": 0,
+          "captions": 0,
+          "annotations": 0,
+          "characters": 626,
+          "remaining_blocks": 82,
+          "relevant_code": false
+        }
+      },
+      "reviewed_relevant_block_indices": [],
+      "curated_code_reference": {
+        "url": "https://learning.oreilly.com/library/view/-/9781789800104/C11078_2_Final_EPUB_SW.xhtml#_idParaDest-91",
+        "label": "Snippet 2.38: Error handling",
+        "sha256": "ef5372f90c1775cf8a0617cc920851d97b8c52bdbe4b8378827ab3b50b2b3455"
+      },
+      "prototype_adapter_used": true
+    }
+  ]
+}

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from copy import deepcopy
+from hashlib import sha256
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -23,6 +25,26 @@ def blocks(html: str, url: str = "") -> list[dict]:
     for image in root.select("a.co img[alt]"):
         image.replace_with(image["alt"])
 
+    # Some EPUBs encode a listing as consecutive paragraphs with one line per
+    # paragraph. Keep their indentation and attach the following listing title.
+    for first in list(root.select("p.snippet")):
+        if first.parent is None:
+            continue
+        lines = [first]
+        nxt = first.find_next_sibling()
+        while nxt is not None and nxt.name == "p" and "snippet" in nxt.get("class", []):
+            lines.append(nxt)
+            nxt = nxt.find_next_sibling()
+        wrapper = soup.new_tag("div", attrs={"data-type": "example"})
+        first.insert_before(wrapper)
+        if nxt is not None and nxt.name == "h6":
+            wrapper.append(nxt.extract())
+        pre = soup.new_tag("pre")
+        pre.string = "\n".join(line.get_text("", strip=False) for line in lines)
+        wrapper.append(pre)
+        for line in lines:
+            line.decompose()
+
     def links(tag):
         return [{"text": " ".join(a.get_text().split()), "url": urljoin(url, a["href"])}
                 for a in tag.find_all("a", href=True)
@@ -32,13 +54,36 @@ def blocks(html: str, url: str = "") -> list[dict]:
     def prose(tag):
         return " ".join(tag.get_text().split())
 
+    def identity(tag):
+        if tag.get("id"):
+            return tag["id"], "block"
+        for parent in tag.parents:
+            if parent is root:
+                break
+            if (parent.get("id") and parent["id"] != "sbo-rt-content"
+                    and len(parent.find_all("pre", limit=11)) <= 10):
+                scope = "example" if parent.get("data-type") == "example" else "section"
+                return parent["id"], scope
+        descendant = tag.find(id=True)
+        if descendant and "co" not in descendant.get("class", []):
+            return descendant["id"], "line"
+        sibling = tag.find_previous_sibling()
+        adjacent = sibling.find(id=True) if sibling else None
+        if adjacent:
+            return adjacent["id"], "block"
+        heading = tag.find_previous(["h1", "h2", "h3", "h4", "h5", "h6"], id=True)
+        return (heading["id"], "section") if heading else (None, "chapter")
+
     out = []
+    section = None
     for tag in root.find_all(["h1", "h2", "h3", "h4", "h5", "h6", "p", "pre", "li", "caption", "figcaption"]):
         if tag.find_parent(["pre", "p", "figcaption", "caption", "h1", "h2", "h3", "h4", "h5", "h6"]):
             continue
         if tag.name == "li" and tag.find(["p", "pre"]):
             continue
         code = tag.name == "pre"
+        if tag.name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            section = prose(tag)
         text = tag.get_text("", strip=False)
         text = text.strip("\n") if code else " ".join(text.split())
         if not text.strip():
@@ -51,6 +96,21 @@ def blocks(html: str, url: str = "") -> list[dict]:
             if dt:
                 block["text"] = prose(dt) + ". " + text
         if code:
+            anchor, scope = identity(tag)
+            block.update(id=f"b{len(out)}", section=section,
+                         url=urljoin(url, "#" + anchor) if anchor else url,
+                         reference_scope=scope, sha256=sha256(text.encode()).hexdigest())
+            clean = deepcopy(tag)
+            markers = clean.select("a.co, span.fm-combinumeral")
+            for marker in markers:
+                marker.decompose()
+            cleaned = clean.get_text("", strip=False).strip("\n").replace("\xa0", " ")
+            block["code"] = cleaned
+            block["transformations"] = []
+            if markers:
+                block["transformations"].append("removed callout markers")
+            if "\xa0" in text:
+                block["transformations"].append("converted nonbreaking spaces to spaces")
             # EPUB examples use a title paragraph or heading inside the same
             # example container. Bare pre blocks have no invented caption.
             for parent in tag.parents:
@@ -78,6 +138,18 @@ def blocks(html: str, url: str = "") -> list[dict]:
                     notes.append(note)
             if notes:
                 block["annotations"] = notes
+            # Manning EPUBs put circled callout explanations in following
+            # paragraphs instead of linked definition lists.
+            sibling = tag.find_next_sibling()
+            inline_notes = []
+            while sibling is not None and sibling.name == "p":
+                match = re.match(r"^([❶-❿①-⑳])\s*(.+)", prose(sibling))
+                if not match:
+                    break
+                inline_notes.append({"label": match[1], "text": match[2]})
+                sibling = sibling.find_next_sibling()
+            if inline_notes:
+                block.setdefault("annotations", []).extend(inline_notes)
         out.append(block)
     return out
 

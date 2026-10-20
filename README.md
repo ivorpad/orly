@@ -119,6 +119,49 @@ orly "q1" > a.txt & orly "q2" > b.txt & wait
 
 ## Using it from an agent
 
+The coding harness's model selects examples and writes the playbook. The CLI
+fetches evidence and extracts code locally; it does not call another model.
+
+Search the requested subject across different books using narrow questions.
+Read relevant passages and code from multiple books before writing the playbook;
+do not assume the first book or chapter covers the subject. Prefer examples for
+the requested library version. Merge duplicate rules, keep version differences
+explicit, and report missing evidence or unresolved conflicts. Respect rate
+limits and `Retry-After`, reuse answers, and fetch each selected chapter once.
+
+```bash
+orly read 'https://learning.oreilly.com/library/view/-/9781492056348/ch18.html' --raw --json > chapter.json
+orly extract chapter.json                       # compact index of all code blocks
+orly extract chapter.json --block b44            # full example and nearby explanation
+orly extract chapter.json --block b44 --json     # structured evidence
+```
+
+Save the chapter outside a public repository. After the initial fetch, these
+`extract` calls require no network or authentication. `extract -` accepts a
+payload on stdin. The default output is Markdown; `--json` has a versioned schema.
+Book citations are hidden by default (`--source false`); use `--source true` to
+include book titles, chapter URLs, and source links in Markdown or JSON.
+Use the index's `chapter_sha256` with `--snapshot SHA256` to reject block IDs
+from a different snapshot. Unknown IDs are an error; unrecognized code markup
+returns an explicit evidence gap. Previews are bounded; selected code is whole.
+
+Examples retain original fragment links, labels when present, source hashes,
+and nearby explanations. Callout markers are separated from code, and
+nonbreaking spaces become ordinary spaces; these mechanical changes are
+reported. The original text remains available in the saved HTML and `read`
+output. A reference may identify a section rather than an individual listing.
+
+Select relevant examples from the index instead of assuming code after a
+citation applies. Write concise Markdown rules and correct code examples taken
+from the evidence. Omit feedback/feedforward sections, proposed tests, and book
+citations by default. Use actual book code in the requested language; do not
+adapt, translate, modernize, or invent examples. Only reported mechanical
+cleanup is allowed. Preserve chapter dependencies and explain missing setup.
+Verify generated Answers claims against chapter passages and listings; a citation
+alone does not establish a claim. Report gaps instead of filling them with code
+or advice from memory. Retain original code references internally even when
+citations are hidden from the playbook.
+
 `skill/` is a Claude Code skill. Symlink it in and an agent can invoke the CLI directly
 instead of scraping the web for book quotes it never actually read:
 
@@ -153,6 +196,7 @@ src/orly/
   commands.py    one function per subcommand
   api.py         the Answers HTTP client
   chapter.py     chapter HTML extraction and block selection
+  evidence.py    local code index and excerpts for the harness model
   auth.py        Chrome cookie extraction and session persistence
   render.py      terminal output and the JSON shapes
   console.py     the two shared rich consoles

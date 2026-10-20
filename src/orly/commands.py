@@ -6,11 +6,13 @@ import getpass
 import json
 import sys
 import time
+from pathlib import Path
 
 from rich.table import Table
 
 from .api import Answers, NotFound, UsageError
 from .chapter import chapter_text, select_chapter
+from .evidence import extract, markdown, without_sources
 from .auth import (
     AUTH_COOKIES,
     AuthError,
@@ -207,6 +209,25 @@ def cmd_read(args) -> int:
         sys.stdout.write("\n")
     else:
         print(payload["html"] if args.raw else chapter_text(result))
+    return 0
+
+
+def cmd_extract(args) -> int:
+    """Consume a saved chapter or stdin without authentication or HTTP."""
+    try:
+        if args.input == "-":
+            payload = json.load(sys.stdin)
+        else:
+            with Path(args.input).open() as stream:
+                payload = json.load(stream)
+    except (OSError, ValueError) as exc:
+        raise UsageError("could not read chapter JSON; use orly read --raw --json to create it") from exc
+    result = extract(payload, args.block, args.snapshot)
+    if args.json:
+        json.dump(result if args.source == "true" else without_sources(result), sys.stdout, indent=2, ensure_ascii=False)
+        sys.stdout.write("\n")
+    else:
+        print(markdown(result, source=args.source == "true"))
     return 0
 
 

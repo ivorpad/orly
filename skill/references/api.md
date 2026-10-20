@@ -74,6 +74,26 @@ contains at most 12 whole blocks, `--json` returns structured blocks and a
 remaining count, and `--raw` returns the full HTML payload. No whole-book fetch
 or crawling. Requests and redirects stay on learning.oreilly.com over HTTPS.
 
+The chapter request uses `Accept: */*` and validates the returned HTML media
+type. Some providers reject a narrower `Accept: text/html` with HTTP 406.
+
+For harness playbooks, search the requested subject across different books and
+read relevant passages and code from multiple books. Prefer examples matching
+the requested version; merge duplicate rules and preserve version differences.
+Report evidence gaps or unresolved conflicts. Respect rate limits and
+`Retry-After`, reuse answers, and cache chapters.
+Use actual book code in the requested language. Do not adapt, translate,
+modernize, or invent examples; only reported mechanical cleanup is allowed.
+Preserve chapter dependencies. Verify Answers claims against chapter text and
+code; report gaps instead of filling them from memory. Retain original code
+references internally even when citations are hidden from the playbook.
+Save `read --raw --json` once per selected chapter and use `orly extract FILE`
+to index code locally. The harness model selects IDs; `extract FILE --block ID`
+returns code, original fragment links, source hashes, callouts, and adjacent
+explanations. `--snapshot SHA256` guards against stale IDs. Extraction performs
+no HTTP, browser, authentication, or model calls. A following-code heuristic
+is insufficient when the citation follows the relevant example.
+
 ## Auth
 
 Cookie auth. Two cookies matter:
