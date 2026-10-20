@@ -267,7 +267,7 @@ def cmd_auth(args) -> int:
         now = time.time()
         for name, exp, source in describe_expiry(load_cookie()):
             if exp is None:
-                console.print(f"  [dim]{name}[/]: session cookie (no fixed expiry)")
+                console.print(f"  [dim]{name}[/]: {source}")
                 continue
             left = exp - now
             when = time.strftime("%Y-%m-%d %H:%M", time.localtime(exp))

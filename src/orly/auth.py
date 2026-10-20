@@ -171,39 +171,6 @@ def jwt_expiry(token: str) -> float | None:
         return None
 
 
-def chrome_expiries() -> dict[str, float]:
-    """Cookie name -> unix expiry, straight from Chrome.
-
-    expires_utc is not encrypted, so this needs no Keychain access.
-    A value of 0 means a session cookie (dies when Chrome quits).
-    """
-    out: dict[str, float] = {}
-    try:
-        dbs = chrome_profiles()
-    except AuthError:
-        return out
-    for db in dbs:
-        with tempfile.TemporaryDirectory() as tmp:
-            copy = Path(tmp) / "Cookies"
-            try:
-                shutil.copy2(db, copy)
-                for suffix in ("-wal", "-shm"):
-                    if (side := db.with_name(db.name + suffix)).is_file():
-                        shutil.copy2(side, copy.with_name(copy.name + suffix))
-                con = sqlite3.connect(f"file:{copy}?immutable=0", uri=True)
-                rows = con.execute(
-                    f"SELECT name, expires_utc FROM cookies WHERE {HOST_FILTER}"
-                ).fetchall()
-                con.close()
-            except (OSError, sqlite3.Error):
-                continue
-        for name, exp in rows:
-            # Chrome stores microseconds since 1601-01-01.
-            unix = (exp / 1_000_000 - 11_644_473_600) if exp else 0.0
-            out[name] = max(out.get(name, 0.0), unix)
-    return out
-
-
 #: The pair that actually authenticates. `orm-jwt` alone gets a 401 once its
 #: claim lapses; `orm-rt` alone is never enough. Sent together, the gateway
 #: silently refreshes and re-issues both. groot_sessionid is not used by this API.
@@ -211,19 +178,18 @@ AUTH_COOKIES = ("orm-jwt", "orm-rt")
 
 
 def describe_expiry(cookie: str) -> list[tuple[str, float | None, str]]:
-    """(name, unix expiry or None, what that expiry means) for the auth cookies."""
+    """Describe expiry claims from the supplied cookies, without browser access."""
     jar = dict(p.split("=", 1) for p in cookie.split("; ") if "=" in p)
-    chrome = chrome_expiries()
     rows = []
     for name in AUTH_COOKIES:
         if name not in jar:
-            rows.append((name, None, "MISSING - re-run: orly auth --chrome"))
+            rows.append((name, None, "missing; re-run orly auth --paste"))
             continue
         if claim := jwt_expiry(jar[name]):
             rows.append((name, claim, "access token claim; auto-refreshed by orm-rt"))
         else:
             rows.append(
-                (name, chrome.get(name) or None, "refresh token; rolls 30d on each use")
+                (name, None, "expiry unavailable from saved cookie")
             )
     return rows
 

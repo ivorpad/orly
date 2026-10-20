@@ -32,6 +32,40 @@ def b64(payload: dict) -> str:
     return f"header.{raw}.signature"
 
 
+@pytest.mark.parametrize("mode", ["--status", "--paste"])
+def test_auth_with_saved_or_pasted_cookie_never_accesses_chrome(monkeypatch, capsys, mode):
+    import io
+    import sys
+    from orly.cli import main
+
+    cookie = f"orm-jwt={b64({'exp': 2000000000})}; orm-rt=opaque-refresh-token"
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("saved/pasted auth must not access Chrome, SQLite, or the Keychain")
+
+    for name in ("chrome_profiles", "keychain_password", "cookies_from_chrome"):
+        monkeypatch.setattr(f"orly.auth.{name}", forbidden)
+    monkeypatch.setattr("orly.commands.cookies_from_chrome", forbidden)
+    monkeypatch.setattr("orly.auth.shutil.copy2", forbidden)
+    monkeypatch.setattr("orly.auth.sqlite3.connect", forbidden)
+    monkeypatch.setattr("orly.commands.load_cookie", lambda: cookie)
+    monkeypatch.setattr("orly.commands.save_cookie", lambda value: None)
+
+    class FakeAnswers:
+        def __init__(self, value):
+            assert value == cookie
+
+        def history(self, count):
+            assert count == 1
+            return []
+
+    monkeypatch.setattr("orly.commands.Answers", FakeAnswers)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(cookie + "\n"))
+    monkeypatch.setattr(sys, "argv", ["orly", "auth", mode])
+    assert main() == 0
+    assert "expiry unavailable from saved cookie" in capsys.readouterr().out
+
+
 class TestFlagTruncation:
     """An agent handed `...backup jobs at specifi` completed it to
     `at specifi[c intervals]` and presented that as a direct quote."""

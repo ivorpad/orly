@@ -27,7 +27,7 @@ Sources
 Needs [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-uv tool install 'git+https://github.com/ivorpad/orly.git@v0.2.0'
+uv tool install 'git+https://github.com/ivorpad/orly.git@v0.2.1'
 ```
 
 For development, install from a local checkout:
@@ -62,7 +62,9 @@ the input is hidden so the session does not end up in your scrollback.
 For scripts, CI, and containers, set `ORLY_COOKIE` to the same string; it takes priority
 over the cached file.
 
-`orly auth --status` checks the session and prints both expiries.
+`orly auth --status` checks the saved session with the API and prints the access
+token's expiry. The refresh token's expiry is unavailable from the saved cookie.
+Only `orly auth --chrome` reads Chrome's cookie database or accesses the Keychain.
 
 > `--chrome` is macOS-only. It reads Chrome's cookie DB via the Keychain, and Linux
 > (gnome-keyring/kwallet) and Windows (DPAPI) encrypt those cookies differently. Rather
