@@ -27,7 +27,7 @@ Sources
 Needs [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-uv tool install 'git+https://github.com/ivorpad/orly.git@v0.2.1'
+uv tool install 'git+https://github.com/ivorpad/orly.git@v0.3.0'
 ```
 
 For development, install from a local checkout:

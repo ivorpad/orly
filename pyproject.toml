@@ -1,6 +1,6 @@
 [project]
 name = "orly"
-version = "0.2.1"
+version = "0.3.0"
 description = "Command line client for O'Reilly Answers, with real book citations"
 readme = "README.md"
 license = { text = "MIT" }
