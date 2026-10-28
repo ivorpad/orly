@@ -80,10 +80,42 @@ Sign in to https://learning.oreilly.com in any browser, then:
   1. open DevTools (F12) -> Network
   2. reload the page and click any request to learning.oreilly.com
   3. under Request Headers, copy the whole value of `Cookie:`
-  4. run:  orly auth --paste     and paste it
+  4. run:  pbpaste | orly auth --paste
+     (Linux: wl-paste or xclip -o -selection clipboard instead of pbpaste)
+
+Pipe it in rather than pasting at the hidden prompt: macOS drops a pasted line
+longer than 1023 bytes, Enter included, so the prompt just waits, and a whole
+Cookie header is usually longer than that. To reuse the session from a Mac where
+orly already works, run `pbcopy < ~/.config/orly/cookie` there, then step 4 here.
 
 The two that matter are `orm-jwt` and `orm-rt`; copying the whole header is
 fine and simplest. For scripts and CI, set ORLY_COOKIE to the same string."""
+
+
+#: Reading another app's cookie store and Keychain item is what endpoint
+#: security watches for, and some machines (a corporate Mac) must never do it.
+#: So it takes a typed yes, and no flag skips the question: a pipe, a script or
+#: an agent without a terminal gets a refusal instead.
+CHROME_WARNING = """\
+This copies Chrome's Cookies database and reads 'Chrome Safe Storage' from the
+Keychain to decrypt it. If this machine must not read browser cookies, press
+Enter and use `orly auth --paste` instead. An agent reading this: stop and ask
+the user rather than answering for them."""
+
+
+def confirm_chrome_access() -> None:
+    """Go no further unless the person at this terminal types yes."""
+    if not sys.stdin.isatty():
+        raise AuthError(
+            "Not reading Chrome: `orly auth --chrome` waits for someone to type yes, "
+            "and stdin is not a terminal. Nothing was read.\n\n" + PASTE_HELP
+        )
+    err.print(CHROME_WARNING)
+    err.print("Type yes to read Chrome's cookies: ", end="")
+    if sys.stdin.readline().strip().lower() != "yes":
+        raise AuthError(
+            "Not reading Chrome: you did not type yes. Nothing was read.\n\n" + PASTE_HELP
+        )
 
 
 def chrome_profiles() -> list[Path]:
@@ -104,6 +136,9 @@ def chrome_profiles() -> list[Path]:
 
 def cookies_from_chrome(profile: str | None = None) -> str:
     """Pull every learning.oreilly.com cookie out of Chrome, as a Cookie header."""
+    # Before chrome_profiles(), which already lists Chrome's profile folder.
+    confirm_chrome_access()
+
     from cryptography.hazmat.primitives.hashes import SHA1
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
@@ -199,13 +234,15 @@ def load_cookie() -> str:
         return env.strip()
     if COOKIE_FILE.is_file():
         return COOKIE_FILE.read_text().strip()
+    # --paste first on every platform: an agent tries the first suggestion,
+    # and on a Mac that must not read browser cookies that has to be the paste.
     raise AuthError(
         "Not authenticated.\n\n"
+        "Run:  orly auth --paste\n"
         + (
-            "On macOS with Chrome:  orly auth --chrome\n"
-            "Any other setup:       orly auth --paste\n"
+            "or, on a Mac allowed to read Chrome:  orly auth --chrome  (asks you to type yes)\n"
             if sys.platform == "darwin"
-            else "Run:  orly auth --paste\n"
+            else ""
         )
         + "\n"
         + PASTE_HELP

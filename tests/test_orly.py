@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 
 import pytest
 
@@ -64,6 +66,85 @@ def test_auth_with_saved_or_pasted_cookie_never_accesses_chrome(monkeypatch, cap
     monkeypatch.setattr(sys, "argv", ["orly", "auth", mode])
     assert main() == 0
     assert "expiry unavailable from saved cookie" in capsys.readouterr().out
+
+
+class Terminal(io.StringIO):
+    """stdin the way a person at a terminal gives it."""
+
+    def isatty(self):
+        return True
+
+
+@pytest.mark.parametrize(
+    "stdin",
+    [io.StringIO("yes\n"), Terminal("no\n"), Terminal("y\n"), Terminal("")],
+    ids=["piped yes", "typed no", "typed y", "end of input"],
+)
+def test_chrome_import_reads_nothing_without_a_typed_yes(monkeypatch, capsys, stdin):
+    """A corporate Mac must never read browser cookies. An agent or a pipe has
+    no terminal to answer from, and anything short of yes stops before Chrome's
+    profile folder is even listed."""
+    from orly.cli import main
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Chrome must not be touched before someone types yes")
+
+    for name in ("chrome_profiles", "keychain_password"):
+        monkeypatch.setattr(f"orly.auth.{name}", forbidden)
+    monkeypatch.setattr("orly.auth.shutil.copy2", forbidden)
+    monkeypatch.setattr("orly.auth.sqlite3.connect", forbidden)
+    monkeypatch.setattr("orly.commands.save_cookie", forbidden)
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "argv", ["orly", "auth", "--chrome"])
+    assert main() == EX_AUTH
+    # rich wraps stderr at 80 columns, so compare with the line breaks folded.
+    assert "Nothing was read." in " ".join(capsys.readouterr().err.split())
+
+
+@pytest.mark.parametrize("answer", ["yes\n", " Yes \n"])
+def test_chrome_import_goes_ahead_once_yes_is_typed(monkeypatch, capsys, answer):
+    from orly.auth import AuthError
+    from orly.cli import main
+
+    reached = []
+
+    def chrome_profiles():
+        reached.append(True)
+        raise AuthError("stopped at chrome_profiles")
+
+    monkeypatch.setattr("orly.auth.chrome_profiles", chrome_profiles)
+    monkeypatch.setattr(sys, "stdin", Terminal(answer))
+    monkeypatch.setattr(sys, "argv", ["orly", "auth", "--chrome"])
+    assert main() == EX_AUTH
+    assert reached == [True]
+    assert "stopped at chrome_profiles" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_auth_failures_suggest_paste_before_chrome(monkeypatch, tmp_path, platform):
+    """An agent tries the first fix it is given. On a Mac that must not read
+    browser cookies, that has to be the paste."""
+    import httpx
+    from orly.api import BASE, Answers
+    from orly.auth import AuthError, load_cookie
+
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.delenv("ORLY_COOKIE", raising=False)
+    monkeypatch.setattr("orly.auth.COOKIE_FILE", tmp_path / "cookie")
+    with pytest.raises(AuthError) as missing:
+        load_cookie()
+
+    api = Answers("orm-jwt=a; orm-rt=b", persist=False)
+    with pytest.raises(AuthError) as rejected:
+        api._check(httpx.Response(401, request=httpx.Request("GET", BASE)))
+    api.http.close()
+
+    for raised in (missing, rejected):
+        text = str(raised.value)
+        assert ("--chrome" in text) == (platform == "darwin")
+        if platform == "darwin":
+            assert text.index("orly auth --paste") < text.index("orly auth --chrome")
+            assert "type yes" in text
 
 
 class TestFlagTruncation:

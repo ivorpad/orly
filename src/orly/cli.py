@@ -108,8 +108,10 @@ if you are an agent, this part matters:
 exit codes, so you can branch without parsing prose:
 
   0 ok   2 usage   1 error/network (retry may help)
-  3 not found (retrying will not help)   4 auth — run `orly auth`   5 timed out,
-  the question exists: `orly show <id>`
+  3 not found (retrying will not help)   5 timed out, the question exists:
+  `orly show <id>`
+  4 auth: ask the user to run `orly auth --paste`. Never run `orly auth --chrome`
+  yourself; it reads the browser's cookies and only goes ahead if they type yes.
 
 with --json, errors are a JSON object on stdout too: {"error", "message",
 "exit_code"}. stdout is only ever JSON under --json; everything else is stderr.
@@ -199,7 +201,8 @@ def main() -> int:
     ex.set_defaults(func=cmd_extract)
 
     au = sub.add_parser("auth", help="manage the session cookie")
-    au.add_argument("--chrome", action="store_true", help="import cookies from Chrome")
+    au.add_argument("--chrome", action="store_true",
+                    help="import cookies from Chrome (macOS); asks you to type yes first")
     au.add_argument("--profile", metavar="NAME", help="Chrome profile, e.g. 'Profile 2'")
     au.add_argument("--paste", action="store_true", help="read a Cookie header from stdin")
     au.add_argument("--status", action="store_true", help="check the saved cookie works")

@@ -41,30 +41,47 @@ session is cached at `~/.config/orly/cookie` (mode 0600) and never leaves the ma
 
 ### Authenticating
 
-**macOS + Chrome** — automatic:
+**macOS + Chrome**, on a Mac where reading browser cookies is allowed:
 
 ```bash
-orly auth --chrome              # one Keychain prompt; --profile "Profile 2" to pick one
+orly auth --chrome              # type yes, then one Keychain prompt; --profile "Profile 2" to pick one
 ```
 
-**Anything else** — paste the header once:
+Before touching anything, `--chrome` says what it will read (Chrome's `Cookies` database
+and the `Chrome Safe Storage` Keychain item) and waits for you to type `yes`. Any other
+answer, or no terminal at all (an agent, a pipe, CI), stops it before it lists Chrome's
+profile folder, and no flag skips the question. On a Mac whose policy forbids reading
+browser cookies, such as a corporate laptop, never type yes there and use `--paste`.
+
+**Anything else**: paste the header once.
 
 ```bash
-orly auth --paste               # prints the DevTools walkthrough, then reads stdin
+pbpaste | orly auth --paste     # Linux: wl-paste or xclip -o -selection clipboard
 ```
 
 Sign in at learning.oreilly.com, open DevTools → Network, click any request to that
 domain, and copy the whole `Cookie:` request header. `orm-jwt` and `orm-rt` are the two
 that matter — either alone is a 401, so copy the lot rather than picking them out. A
-paste missing one is rejected before it is saved. Nothing appears on screen as you paste;
-the input is hidden so the session does not end up in your scrollback.
+paste missing one is rejected before it is saved.
+
+Pipe it in. `orly auth --paste` on its own prints the walkthrough and reads the header at
+a hidden prompt, but macOS drops a pasted line longer than 1023 bytes, Enter included,
+so with a full header that prompt just waits. A piped header never appears on screen
+either, so the session stays out of your scrollback.
+
+To move a session to another Mac, run `pbcopy < ~/.config/orly/cookie` on the one where
+orly is signed in, get that text onto the other Mac's clipboard, and run
+`pbpaste | orly auth --paste` there. The paste is checked for both auth cookies, saved
+with mode 0600 and probed against the API, so `OK signed in` means that Mac is ready
+without its browser ever being read.
 
 For scripts, CI, and containers, set `ORLY_COOKIE` to the same string; it takes priority
 over the cached file.
 
 `orly auth --status` checks the saved session with the API and prints the access
 token's expiry. The refresh token's expiry is unavailable from the saved cookie.
-Only `orly auth --chrome` reads Chrome's cookie database or accesses the Keychain.
+Only `orly auth --chrome` reads Chrome's cookie database or accesses the Keychain, and
+only after you type yes.
 
 > `--chrome` is macOS-only. It reads Chrome's cookie DB via the Keychain, and Linux
 > (gnome-keyring/kwallet) and Windows (DPAPI) encrypt those cookies differently. Rather
@@ -185,8 +202,8 @@ looking like the session, is not used by this API at all.
 
 The server re-issues both cookies on every response, so `orly` writes the jar back
 atomically after each call and the session rolls 30 days forward from last use. In
-practice you re-run `auth --chrome` only after a month idle, or if O'Reilly invalidates
-the session.
+practice you sign in again (`auth --paste`, or `auth --chrome` where it's allowed) only
+after a month idle, or if O'Reilly invalidates the session.
 
 ## Layout
 

@@ -123,15 +123,16 @@ class Answers:
     def _check(self, r: httpx.Response) -> httpx.Response:
         self.flush_cookies()
         if r.status_code in (401, 403):
+            # --paste first everywhere; see load_cookie() for why.
             raise AuthError(
                 f"O'Reilly rejected the session cookie (HTTP {r.status_code}).\n"
+                "Refresh it with:  orly auth --paste\n"
+                "(run `orly auth --paste` with no input piped for instructions)"
                 + (
-                    "Re-run:  orly auth --chrome\n"
-                    "If that keeps failing, sign in to learning.oreilly.com in "
-                    "Chrome first."
+                    "\nor, on a Mac allowed to read Chrome:  orly auth --chrome  "
+                    "(asks you to type yes)"
                     if sys.platform == "darwin"
-                    else "Refresh it with:  orly auth --paste\n"
-                    "(run `orly auth --paste` with no input piped for instructions)"
+                    else ""
                 )
             )
         r.raise_for_status()

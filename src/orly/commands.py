@@ -251,8 +251,13 @@ def cmd_auth(args) -> int:
             # A plain readline() echoes, which leaves the whole live session
             # sitting in scrollback and in any tmux/screen buffer. getpass
             # reads it without echo. Nothing appearing as you paste is the
-            # point, not a hang -- hence saying so in the prompt.
-            cookie = getpass.getpass("Paste the Cookie header (input hidden), then Enter: ").strip()
+            # point, not a hang -- hence saying so in the prompt. Past 1023
+            # bytes on macOS it does hang (the tty drops the rest, Enter
+            # included), so the prompt also gives the way out.
+            cookie = getpass.getpass(
+                "Paste the Cookie header (input hidden), then Enter. "
+                "If Enter does nothing, press Ctrl-C and pipe it in (step 4): "
+            ).strip()
         else:
             # getpass would read /dev/tty here and ignore the pipe entirely.
             cookie = sys.stdin.readline().strip()
